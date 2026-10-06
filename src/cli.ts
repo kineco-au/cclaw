@@ -9,8 +9,8 @@ import { createStyler } from "./ui/style.ts";
 const USAGE = `cclaw - a Claude-Code-shaped terminal agent running on the Cursor CLI
 
 USAGE
-  cclaw [options] [prompt...]        start the agent in the current directory
   cclaw <command> [args...]
+  cclaw -p "<prompt>" [options]       run one prompt headlessly and print the reply
 
 COMMANDS
   chat                               start the cclaw TUI (our UI, Cursor over ACP)
@@ -32,6 +32,10 @@ COMMANDS
   help                               this message
 
 OPTIONS
+  -p, --print [prompt...]            headless: one prompt, reply on stdout.
+                                     Reads stdin when piped or given '-'.
+      --output-format <text|json>    headless output shape (default text)
+  -r, --resume <selector>            headless: carry a prior session's context
   -P, --profile <name>               use this profile for this run
       --no-banner                    suppress the banner
       --dry-run                      print the command and env, then exit
@@ -49,10 +53,18 @@ interface Parsed {
   noBanner: boolean;
   deep: boolean;
   dryRun: boolean;
+  print: boolean;
 }
 
 export function parseArgv(argv: string[]): Parsed {
-  const out: Parsed = { command: "", args: [], noBanner: false, deep: false, dryRun: false };
+  const out: Parsed = {
+    command: "",
+    args: [],
+    noBanner: false,
+    deep: false,
+    dryRun: false,
+    print: false,
+  };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -73,6 +85,10 @@ export function parseArgv(argv: string[]): Parsed {
       out.dryRun = true;
       continue;
     }
+    if (a === "-p" || a === "--print") {
+      out.print = true;
+      continue;
+    }
     if (a === "-P" || a === "--profile") {
       const next = argv[i + 1];
       if (next !== undefined) {
@@ -81,7 +97,7 @@ export function parseArgv(argv: string[]): Parsed {
       }
       continue;
     }
-    if (out.command === "" && !a.startsWith("-")) {
+    if (out.command === "" && !out.print && !a.startsWith("-")) {
       out.command = a;
       continue;
     }
@@ -94,6 +110,11 @@ export function parseArgv(argv: string[]): Parsed {
 async function main(): Promise<number> {
   const parsed = parseArgv(process.argv.slice(2));
   const s = createStyler();
+
+  if (parsed.print) {
+    const { printCommand } = await import("./commands/print.ts");
+    return await printCommand(parsed.args, parsed.profile);
+  }
 
   switch (parsed.command) {
     case "":

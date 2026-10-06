@@ -88,3 +88,28 @@ describe("isPlausibleSummary", () => {
     expect(isPlausibleSummary(`${" ".repeat(400)}too short${" ".repeat(400)}`)).toBe(false);
   });
 });
+
+describe("carriedMessage kinds", () => {
+  test("a transcript is not described as a cleared summary", () => {
+    // Telling the model a replayed transcript is a summary of a cleared
+    // session asserts two untrue things about its own history.
+    const m = carriedMessage("User: hi", "carry on", "transcript");
+    expect(m).toContain("transcript of an earlier session");
+    expect(m).not.toContain("cleared");
+    expect(m).not.toContain("A summary");
+  });
+
+  test("summary stays the default, so existing callers are unchanged", () => {
+    expect(carriedMessage("s", "t")).toBe(carriedMessage("s", "t", "summary"));
+    expect(carriedMessage("s", "t")).toContain("cleared");
+  });
+
+  test("both kinds keep the tags and the user's text", () => {
+    for (const kind of ["summary", "transcript"] as const) {
+      const m = carriedMessage("ctx", "what next?", kind);
+      expect(m).toContain("<compacted-context>");
+      expect(m).toContain("</compacted-context>");
+      expect(m.endsWith("what next?")).toBe(true);
+    }
+  });
+});

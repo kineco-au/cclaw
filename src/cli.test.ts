@@ -34,6 +34,30 @@ describe("parseArgv", () => {
     expect(parseArgv(["doctor", "--", "--profile", "x"]).args).toEqual(["--profile", "x"]);
   });
 
+  test("reads -p and its long form", () => {
+    expect(parseArgv(["-p", "hi"]).print).toBe(true);
+    expect(parseArgv(["--print", "hi"]).print).toBe(true);
+    expect(parseArgv(["chat"]).print).toBe(false);
+  });
+
+  test("under -p the first bare word is prompt text, not a command", () => {
+    // Otherwise `cclaw -p chat about the build` would launch the TUI.
+    const parsed = parseArgv(["-p", "chat", "about", "the", "build"]);
+    expect(parsed.command).toBe("");
+    expect(parsed.args).toEqual(["chat", "about", "the", "build"]);
+  });
+
+  test("-p still reads the profile flag", () => {
+    const parsed = parseArgv(["-p", "-P", "work", "do", "it"]);
+    expect(parsed.profile).toBe("work");
+    expect(parsed.args).toEqual(["do", "it"]);
+  });
+
+  test("-P and -p are distinct, since only case separates them", () => {
+    expect(parseArgv(["-P", "work"]).print).toBe(false);
+    expect(parseArgv(["-P", "work"]).profile).toBe("work");
+  });
+
   test("a trailing --profile with no value does not crash", () => {
     expect(parseArgv(["--profile"]).profile).toBeUndefined();
   });

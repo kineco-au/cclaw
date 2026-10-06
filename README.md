@@ -18,6 +18,7 @@ cclaw doctor           # diagnose dependencies, auth, sandbox and policy
 | Command                                                             | What it does                                                                                 |
 | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `cclaw` / `cclaw chat`                                              | the chat TUI (our UI, Cursor over ACP)                                                       |
+| `cclaw -p "<prompt>"`                                               | headless: one prompt, reply on stdout                                                        |
 | `cclaw raw [-- …]`                                                  | Cursor's own TUI under a cclaw profile. **The only mode with a live context-window figure.** |
 | `cclaw setup`                                                       | create the profile and seed its policy; safe to re-run                                       |
 | `cclaw doctor [--deep]`                                             | dependencies, ACP, auth, plan tier, sandbox support, hook sources                            |
@@ -78,6 +79,36 @@ native path, and when it is refused falls back to replaying its own transcript
 into a fresh session as carried context. It says which happened. The transcript
 is ours on disk either way; the difference is whether the model remembers it or
 is reading it.
+
+## Headless runs
+
+`cclaw -p` runs one prompt without a TUI, for pipes, scripts and CI:
+
+```sh
+cclaw -p "what changed in src since the last tag?"
+cclaw -p fix the failing test          # quoting is optional
+git diff | cclaw -p "review this diff"  # a piped prompt works too
+cclaw -p --json "list the TODOs"       # machine-readable
+cclaw -p -r 1 "and now fix them"       # carry the last session's context
+```
+
+`text` output is the reply alone, so it pipes cleanly; everything else goes to
+stderr. `--json` adds the session id, `stopReason`, the tool calls made, and
+any permission requests that were refused.
+
+Exit codes are `0` on success, `2` for a usage error, and `1` when the agent
+errored, replied with nothing, or **was refused by the plan** — Cursor streams
+"Upgrade your plan to continue" as an ordinary reply with
+`stopReason: "end_turn"`, so without that check a scripted run would exit 0 on
+a non-answer.
+
+Nobody is present to answer a permission prompt, so consent is declined and
+reported rather than waited on, exactly as in `cclaw loop`. Allowlisted
+commands and grants added with `cclaw grant add` still run — the same policy
+and the same approval store as the TUI, not a second set of rules.
+
+Every headless turn is recorded to the session store, so a scripted run can be
+picked up afterwards with `/resume` in the TUI.
 
 ## Context and compaction
 
@@ -240,5 +271,12 @@ linting, so refreshes stay clean diffs — see `scripts/vendor-openclaw.sh` and
 `PROVENANCE.md` for the exact commits. Ported files carry a header naming their
 upstream source; `src/tui/view/shims/` holds adapters where upstream's logic
 assumed OpenClaw concepts Cursor does not have.
+
+Design notes live in `docs/`:
+
+| Document                   | What it covers                                            |
+| -------------------------- | --------------------------------------------------------- |
+| `docs/architecture.html`   | how cclaw talks to Cursor — all five integration channels |
+| `docs/subagents-design.md` | implementation design for parallel subagents (not built)  |
 
 Licensing: cclaw is MIT. See `THIRD-PARTY-NOTICES.md`.

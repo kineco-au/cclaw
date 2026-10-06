@@ -59,20 +59,34 @@ export function isPlausibleSummary(reply: string): boolean {
 const OPEN = "<compacted-context>";
 const CLOSE = "</compacted-context>";
 
-/**
- * Prepend a carried summary to the next message. Tagged so the model can tell
- * recalled context from what the user just typed.
- */
-export function carriedMessage(summary: string, text: string): string {
-  return [
-    OPEN,
+/** What the carried block holds: a model-written summary, or a real transcript. */
+export type CarriedKind = "summary" | "transcript";
+
+const PREAMBLE: Record<CarriedKind, string[]> = {
+  summary: [
     "A summary of this conversation so far. The session it describes has been",
     "cleared, so this is all that remains of it. Treat it as established fact",
     "and continue from it.",
-    "",
-    summary.trim(),
-    CLOSE,
-    "",
-    text,
-  ].join("\n");
+  ],
+  transcript: [
+    "The transcript of an earlier session, resumed. You do not hold it in",
+    "context, so it is replayed here verbatim. Treat it as established fact",
+    "and continue from it.",
+  ],
+};
+
+/**
+ * Prepend carried context to the next message. Tagged so the model can tell
+ * recalled context from what the user just typed.
+ *
+ * The preamble must match what is actually carried: calling a replayed
+ * transcript a summary of a cleared session tells the model two untrue things
+ * about its own history.
+ */
+export function carriedMessage(
+  carried: string,
+  text: string,
+  kind: CarriedKind = "summary",
+): string {
+  return [OPEN, ...PREAMBLE[kind], "", carried.trim(), CLOSE, "", text].join("\n");
 }

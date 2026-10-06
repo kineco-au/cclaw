@@ -15,10 +15,9 @@ import {
   Text,
   TuiMainScreen,
 } from "@earendil-works/pi-tui";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildCommands, runSlash, type CommandContext } from "./commands.ts";
-import { carriedMessage, compactPrompt, isPlausibleSummary } from "./compact.ts";
+import { carriedMessage, compactPrompt, isPlausibleSummary, type CarriedKind } from "./compact.ts";
 import { loadUserCommands, type UserCommand } from "./user-commands.ts";
 import {
   appendTurn,
@@ -50,6 +49,7 @@ import {
   type AskContext,
 } from "../policy/resolver.ts";
 import { SENSITIVE_TOOLS } from "../policy/templates.ts";
+import { readPolicyFromConfig } from "../policy/profile-policy.ts";
 import type { ExecMode } from "../policy/exec-policy.ts";
 import { readGoal } from "../goal.ts";
 import type { ProfilePaths, Paths } from "../env.ts";
@@ -70,29 +70,6 @@ export interface AppOptions {
 interface Pending {
   ctx: AskContext;
   resolve: (choice: AskChoiceKind | null) => void;
-}
-
-/** Read the allow/deny lists and approval mode out of the profile's Cursor config. */
-async function readPolicyFromConfig(
-  cursorConfigDir: string,
-): Promise<{ allow: string[]; deny: string[] }> {
-  try {
-    const raw: unknown = JSON.parse(
-      await readFile(join(cursorConfigDir, "cli-config.json"), "utf8"),
-    );
-    const perms = (raw as { permissions?: { allow?: unknown; deny?: unknown } }).permissions;
-    const pick = (v: unknown): string[] =>
-      Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-    // Entries are Cursor's grammar, e.g. Shell(ls) or Shell(git:status*).
-    // We match on bare command names, so unwrap Shell(...) and drop the rest.
-    const unwrapShell = (entries: string[]): string[] =>
-      entries
-        .map((e) => /^Shell\(([^:)]+)/.exec(e)?.[1])
-        .filter((e): e is string => e !== undefined);
-    return { allow: unwrapShell(pick(perms?.allow)), deny: unwrapShell(pick(perms?.deny)) };
-  } catch {
-    return { allow: [], deny: [] };
-  }
 }
 
 export async function runChatApp(opts: AppOptions): Promise<number> {
@@ -122,7 +99,7 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
   let model = "…";
   /** Context waiting to be prepended to the next message, and what it is. */
   let carried: string | null = null;
-  let carriedLabel = "context";
+  let carriedLabel: CarriedKind = "summary";
   /** Cursor's own slash commands, which arrive by notification after connect. */
   let cursorCommands: CommandEntry[] = [];
   let userCommands: UserCommand[] = await loadUserCommands(opts.profilePaths.commandsDir);
@@ -312,7 +289,7 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
     // A carried summary is cleared only once its turn has gone out: dropping it
     // on a failed send would lose the one record of the compacted session.
     const summary = carried;
-    const message = summary === null ? text : carriedMessage(summary, text);
+    const message = summary === null ? text : carriedMessage(summary, text, carriedLabel);
     await persist({ role: "user", text: message });
     await backend.sendChat({ sessionKey: SESSION_KEY, message });
     carried = null;
