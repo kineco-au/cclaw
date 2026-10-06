@@ -1,0 +1,7 @@
+# Vendored verbatim from upstream; never reformat, or refreshes become dirty diffs.
+src/vendor/
+reference/
+prototype-bash/
+node_modules/
+dist/
+bun.lock

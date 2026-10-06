@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Launcher: resolve this script's real location so a symlink into ~/.local/bin
+# still finds the repo, then hand off to Bun.
+set -euo pipefail
+src=${BASH_SOURCE[0]}
+while [[ -L $src ]]; do
+  dir=$(cd -P "$(dirname "$src")" && pwd)
+  src=$(readlink "$src")
+  [[ $src != /* ]] && src=$dir/$src
+done
+root=$(cd -P "$(dirname "$src")/.." && pwd)
+if ! command -v bun > /dev/null 2>&1; then
+  printf 'cclaw requires Bun: curl -fsSL https://bun.sh/install | bash\n' >&2
+  exit 1
+fi
+exec bun run "$root/src/cli.ts" "$@"

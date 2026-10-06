@@ -1,0 +1,3 @@
+[test]
+# reference/ holds upstream source cloned for reading only; never run its tests.
+root = "src"

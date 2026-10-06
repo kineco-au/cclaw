@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": ["bun"],
+    "baseUrl": ".",
+    "paths": {
+      "@openclaw/normalization-core": ["./src/vendor/normalization-core/src/index.ts"],
+      "@openclaw/normalization-core/*": ["./src/vendor/normalization-core/src/*.ts"],
+      "@openclaw/gateway-protocol": ["./src/vendor/gateway-protocol/src/index.ts"],
+      "@openclaw/gateway-protocol/*": ["./src/vendor/gateway-protocol/src/*.ts"],
+      "@openclaw/gateway-client": ["./src/vendor/gateway-client/src/index.ts"],
+      "@openclaw/gateway-client/*": ["./src/vendor/gateway-client/src/*.ts"],
+      "@openclaw/terminal-core": ["./src/vendor/terminal-core/src/index.ts"],
+      "@openclaw/terminal-core/*": ["./src/vendor/terminal-core/src/*.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/vendor/**", "reference/**", "node_modules"]
+}

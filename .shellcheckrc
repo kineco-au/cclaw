@@ -1,0 +1,8 @@
+shell=bash
+enable=all
+external-sources=true
+source-path=SCRIPTDIR
+# SC2250: ${var} everywhere is noise in shell this dense.
+disable=SC2250
+# SC2312: some command failures inside conditionals are deliberately ignored.
+disable=SC2312

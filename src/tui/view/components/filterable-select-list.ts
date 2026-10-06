@@ -1,0 +1,141 @@
+/**
+ * PORTED FROM OpenClaw: src/tui/components/filterable-select-list.ts
+ * Upstream: https://github.com/openclaw/openclaw (MIT) - commit in PROVENANCE.md
+ *
+ * Verbatim except import specifiers, which are rewritten to cclaw path aliases
+ * and local shims. Do not reshape the component API.
+ */
+import {
+  type Component,
+  type Focusable,
+  fuzzyFilter,
+  Input,
+  matchesKey,
+  type SelectItem,
+  SelectList,
+  type SelectListTheme,
+  truncateToWidth,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
+import chalk from "chalk";
+import { sanitizeRenderableLine } from "../shims/formatters.ts";
+
+export interface FilterableSelectItem extends SelectItem {
+  /** Additional searchable fields beyond label */
+  searchText?: string;
+}
+
+interface FilterableSelectListTheme extends SelectListTheme {
+  filterLabel: (text: string) => string;
+}
+
+/**
+ * Combines text input filtering with a select list.
+ * User types to filter, arrows or Ctrl+P/Ctrl+N navigate, and Escape clears or cancels.
+ */
+export class FilterableSelectList implements Component, Focusable {
+  private input: Input;
+  private selectList: SelectList;
+  private allItems: Array<{ item: FilterableSelectItem; searchText: string }>;
+
+  onSelect?: (item: SelectItem) => void;
+  onCancel?: () => void;
+
+  constructor(
+    items: FilterableSelectItem[],
+    private readonly maxVisible: number,
+    private readonly theme: FilterableSelectListTheme,
+  ) {
+    // Each overlay owns fixed rows; search keeps raw fields while display copies stay sanitized.
+    this.allItems = items.map((item) => ({
+      searchText: [item.label, item.description, item.searchText].filter(Boolean).join(" "),
+      item: {
+        ...item,
+        label:
+          sanitizeRenderableLine(item.label || item.value) ||
+          sanitizeRenderableLine(item.value) ||
+          "(unnamed)",
+        description: sanitizeRenderableLine(item.description ?? ""),
+      },
+    }));
+    this.input = new Input();
+    // Input owns terminal key decoding; clearing follows the normal filter refresh.
+    this.input.onEscape = () => {
+      if (this.input.getValue()) {
+        this.input.setValue("");
+      } else {
+        this.onCancel?.();
+      }
+    };
+    this.selectList = this.createSelectList(this.allItems);
+  }
+
+  get focused(): boolean {
+    return this.input.focused;
+  }
+
+  set focused(value: boolean) {
+    this.input.focused = value;
+  }
+
+  private createSelectList(items: typeof this.allItems): SelectList {
+    return new SelectList(
+      items.map((entry) => entry.item),
+      this.maxVisible,
+      this.theme,
+    );
+  }
+
+  invalidate(): void {
+    this.input.invalidate();
+    this.selectList.invalidate();
+  }
+
+  render(width: number): string[] {
+    const lines: string[] = [];
+    const safeWidth = Math.max(0, width);
+
+    const filterLabel = this.theme.filterLabel("Filter: ");
+    const inputLines = this.input.render(Math.max(0, safeWidth - visibleWidth(filterLabel)));
+    const inputText = inputLines[0] ?? "";
+    lines.push(truncateToWidth(filterLabel + inputText, safeWidth, ""));
+
+    lines.push(chalk.dim("─".repeat(safeWidth)));
+
+    const listLines = this.selectList.render(safeWidth);
+    lines.push(...listLines.map((line) => truncateToWidth(line, safeWidth, "")));
+
+    return lines;
+  }
+
+  handleInput(keyData: string): void {
+    // Printable keys must reach the filter; arrows and Ctrl keys own navigation.
+    if (matchesKey(keyData, "up") || matchesKey(keyData, "ctrl+p")) {
+      this.selectList.handleInput("\x1b[A");
+      return;
+    }
+
+    if (matchesKey(keyData, "down") || matchesKey(keyData, "ctrl+n")) {
+      this.selectList.handleInput("\x1b[B");
+      return;
+    }
+
+    if (matchesKey(keyData, "enter")) {
+      const selected = this.selectList.getSelectedItem();
+      if (selected) {
+        this.onSelect?.(selected);
+      }
+      return;
+    }
+
+    const prevValue = this.input.getValue();
+    this.input.handleInput(keyData);
+    const newValue = this.input.getValue();
+
+    if (newValue !== prevValue) {
+      this.selectList = this.createSelectList(
+        fuzzyFilter(this.allItems, newValue, (entry) => entry.searchText),
+      );
+    }
+  }
+}

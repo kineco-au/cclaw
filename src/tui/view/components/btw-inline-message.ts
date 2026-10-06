@@ -1,0 +1,45 @@
+/**
+ * PORTED FROM OpenClaw: src/tui/components/btw-inline-message.ts
+ * Upstream: https://github.com/openclaw/openclaw (MIT) - commit in PROVENANCE.md
+ *
+ * Verbatim except import specifiers, which are rewritten to cclaw path aliases
+ * and local shims. Do not reshape the component API.
+ */
+import { Container, Spacer, Text } from "@earendil-works/pi-tui";
+import { tuiTheme as theme } from "../theme/theme.ts";
+import { sanitizeRenderableLine, sanitizeRenderableText } from "../shims/formatters.ts";
+import { AssistantMessageComponent } from "./assistant-message.ts";
+
+type BtwInlineMessageParams = {
+  question: string;
+  text: string;
+  isError?: boolean;
+};
+
+/** Renders a dismissible BTW result, with error text or assistant markdown content. */
+export class BtwInlineMessage extends Container {
+  constructor(params: BtwInlineMessageParams) {
+    super();
+    this.setResult(params);
+  }
+
+  setResult(params: BtwInlineMessageParams) {
+    const question = sanitizeRenderableLine(params.question);
+    let text = params.text;
+    if (params.isError) {
+      text = sanitizeRenderableText(text);
+      if (!text.trim()) {
+        text = "(no output)";
+      }
+    }
+    this.clear();
+    this.addChild(new Spacer(1));
+    this.addChild(new Text(theme.header(`BTW: ${question}`), 1, 0));
+    if (params.isError) {
+      this.addChild(new Text(theme.error(text), 1, 0));
+    } else {
+      this.addChild(new AssistantMessageComponent(text));
+    }
+    this.addChild(new Text(theme.dim("Press Enter or Esc to dismiss"), 1, 0));
+  }
+}
