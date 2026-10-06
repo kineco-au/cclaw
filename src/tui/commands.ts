@@ -11,6 +11,8 @@
  */
 
 import type { AutocompleteItem, SlashCommand } from "@earendil-works/pi-tui";
+import type { SessionSummary } from "./sessions.ts";
+import { expandTemplate, type UserCommand } from "./user-commands.ts";
 
 export interface CommandContext {
   /** Models the live session will accept. */
@@ -43,7 +45,31 @@ export interface CommandContext {
   busy: () => boolean;
   /** Summarise this session, then replace it with a fresh one. */
   compact: (focus?: string) => Promise<CompactOutcome>;
+  /** Send text to the agent as an ordinary prompt. */
+  sendPrompt: (text: string) => void;
+  /** Whether streamed reasoning is shown. */
+  thinking: () => boolean;
+  setThinking: (on: boolean) => void;
+  /** Slash commands Cursor advertises for this session. */
+  cursorCommands: () => { name: string; description: string }[];
+  /** Slash commands defined by markdown files in the profile. */
+  userCommands: () => UserCommand[];
+  /** Saved sessions, newest first. */
+  listSessions: () => Promise<SessionSummary[]>;
+  /** Re-open a saved session. */
+  resume: (selector: string) => Promise<ResumeOutcome>;
 }
+
+export type ResumeOutcome =
+  /**
+   * `native` means Cursor restored its own session. `replayed` means it would
+   * not, so the transcript is carried into the next message as text instead —
+   * the history is intact either way, but in `replayed` the model is reading it
+   * rather than remembering it.
+   */
+  | { kind: "resumed"; session: SessionSummary; mode: "native" | "replayed" }
+  | { kind: "not-found"; selector: string }
+  | { kind: "failed"; reason: string };
 
 export type CompactOutcome =
   /** The session was replaced; the summary is carried into the next message. */
@@ -67,7 +93,51 @@ export function shortModelLabel(modelId: string, name: string): string {
   return bits.length > 0 ? `${name} (${bits.join(", ")})` : name;
 }
 
+/** Names cclaw implements itself; these always win over a discovered command. */
+export function reservedNames(ctx: CommandContext): Set<string> {
+  return new Set(
+    builtinCommands(ctx)
+      .map((c) => c.name)
+      .concat(["new", "quit"]),
+  );
+}
+
+/**
+ * Every command the prompt line offers: ours, then the user's markdown files,
+ * then whatever Cursor advertised for this session.
+ *
+ * Ours win on a name collision because they are the ones that drive cclaw
+ * itself; a Cursor command called /model would otherwise shadow the switcher.
+ * A user's own file beats Cursor's built-in, since writing the file is an
+ * explicit act.
+ */
 export function buildCommands(ctx: CommandContext): SlashCommand[] {
+  const out = builtinCommands(ctx);
+  const seen = new Set(out.map((c) => c.name));
+
+  for (const u of ctx.userCommands()) {
+    if (seen.has(u.name)) continue;
+    seen.add(u.name);
+    out.push({
+      name: u.name,
+      description: u.description,
+      ...(u.argumentHint !== undefined ? { argumentHint: u.argumentHint } : {}),
+    });
+  }
+
+  for (const c of ctx.cursorCommands()) {
+    if (seen.has(c.name)) continue;
+    seen.add(c.name);
+    out.push({
+      name: c.name,
+      description: c.description === "" ? "cursor command" : c.description,
+    });
+  }
+
+  return out;
+}
+
+function builtinCommands(ctx: CommandContext): SlashCommand[] {
   return [
     {
       name: "model",
@@ -147,6 +217,27 @@ export function buildCommands(ctx: CommandContext): SlashCommand[] {
       description: "summarise this session and continue in a fresh one",
       argumentHint: "[what to keep]",
     },
+    {
+      name: "resume",
+      description: "re-open a saved session",
+      argumentHint: "[number|id]",
+      getArgumentCompletions: (): AutocompleteItem[] => [],
+    },
+    {
+      name: "thinking",
+      description: "show or hide streamed reasoning",
+      argumentHint: "[on|off]",
+      getArgumentCompletions: (prefix: string): AutocompleteItem[] => {
+        const on = ctx.thinking();
+        return ["on", "off"]
+          .filter((v) => prefix.trim() === "" || v.startsWith(prefix.trim().toLowerCase()))
+          .map((v) => ({
+            value: v,
+            label: (v === "on") === on ? `${v} ✓` : v,
+            description: v === "on" ? "stream the model's reasoning" : "hide reasoning",
+          }));
+      },
+    },
     { name: "usage", description: "session, plan and grant summary" },
     {
       name: "grant",
@@ -157,6 +248,14 @@ export function buildCommands(ctx: CommandContext): SlashCommand[] {
     { name: "help", description: "list these commands" },
     { name: "exit", description: "exit cclaw" },
   ];
+}
+
+/** One line describing a saved session for the /resume list. */
+export function describeSession(s: SessionSummary): string {
+  const when = new Date(s.updatedAt).toISOString().slice(0, 16).replace("T", " ");
+  const prompt = s.firstPrompt ?? "(no prompt)";
+  const trimmed = prompt.length > 48 ? `${prompt.slice(0, 47)}…` : prompt;
+  return `${when}  ${String(s.turns).padStart(3)} turns  ${trimmed.replace(/\s+/g, " ")}`;
 }
 
 /** Split "/model foo bar" into its name and argument. */
@@ -367,6 +466,68 @@ export async function runSlash(input: string, ctx: CommandContext): Promise<Comm
       return { handled: true };
     }
 
+    case "thinking": {
+      const want = arg.trim().toLowerCase();
+      if (want === "") {
+        ctx.say(
+          `Reasoning is ${ctx.thinking() ? "shown" : "hidden"}. Toggle with /thinking on|off.`,
+        );
+        return { handled: true };
+      }
+      if (want !== "on" && want !== "off") {
+        ctx.say("Usage: /thinking on|off");
+        return { handled: true };
+      }
+      ctx.setThinking(want === "on");
+      ctx.say(
+        want === "on"
+          ? "Reasoning will be shown as it streams."
+          : "Reasoning hidden. It still streams, it is just not rendered.",
+      );
+      return { handled: true };
+    }
+
+    case "resume": {
+      if (ctx.busy() || ctx.loopRunning()) {
+        ctx.say("Finish or cancel the current turn first — Esc cancels.");
+        return { handled: true };
+      }
+      const sessions = await ctx.listSessions();
+      if (sessions.length === 0) {
+        ctx.say("No saved sessions yet. One is recorded from your first message.");
+        return { handled: true };
+      }
+      if (arg === "") {
+        ctx.say(
+          `Saved sessions (${sessions.length}):\n` +
+            sessions
+              .slice(0, 10)
+              .map((sn, i) => `  ${String(i + 1).padStart(2)}. ${describeSession(sn)}`)
+              .join("\n") +
+            "\n\nRe-open with /resume <number>.",
+        );
+        return { handled: true };
+      }
+      const outcome = await ctx.resume(arg);
+      switch (outcome.kind) {
+        case "resumed":
+          ctx.say(
+            `Resumed ${describeSession(outcome.session)}` +
+              (outcome.mode === "native"
+                ? ""
+                : "\n\nCursor would not reopen its own session, so the transcript is carried " +
+                  "into your next message as context instead."),
+          );
+          return { handled: true };
+        case "not-found":
+          ctx.say(`No session matches '${outcome.selector}'. Try /resume to list them.`);
+          return { handled: true };
+        case "failed":
+          ctx.say(`Could not resume: ${outcome.reason}`);
+          return { handled: true };
+      }
+    }
+
     case "quit":
     case "exit": {
       ctx.quit();
@@ -374,6 +535,19 @@ export async function runSlash(input: string, ctx: CommandContext): Promise<Comm
     }
 
     default: {
+      // A name we do not implement may still be a command: one of the user's
+      // own markdown files, or one Cursor advertised for this session. Both
+      // resolve to a prompt rather than to cclaw behaviour.
+      const own = ctx.userCommands().find((u) => u.name === name);
+      if (own !== undefined) {
+        ctx.sendPrompt(expandTemplate(own.template, arg));
+        return { handled: true };
+      }
+      if (ctx.cursorCommands().some((c) => c.name === name)) {
+        // Forwarded verbatim: it is Cursor's command, and Cursor parses it.
+        ctx.sendPrompt(arg === "" ? `/${name}` : `/${name} ${arg}`);
+        return { handled: true };
+      }
       ctx.say(`Unknown command '/${name}'. Try /help.`);
       return { handled: true };
     }

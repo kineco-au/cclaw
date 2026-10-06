@@ -19,6 +19,20 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildCommands, runSlash, type CommandContext } from "./commands.ts";
 import { carriedMessage, compactPrompt, isPlausibleSummary } from "./compact.ts";
+import { loadUserCommands, type UserCommand } from "./user-commands.ts";
+import {
+  appendTurn,
+  listSessions as listSavedSessions,
+  newSessionId,
+  pruneSessions,
+  readSession,
+  renderTranscript,
+  resolveSelector,
+  startSession,
+  type SessionSummary,
+} from "./sessions.ts";
+import type { CommandEntry } from "@openclaw/gateway-protocol";
+import { renderToolEvent, StreamRouter } from "./stream-render.ts";
 import { clearGoal as clearGoalFiles, setGoal as setGoalFiles, type Goal } from "../goal.ts";
 import { cursorAbout, resolveCursorBinary } from "../cursor.ts";
 import { GOAL_MET_SENTINEL } from "../commands/loop.ts";
@@ -98,13 +112,26 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
   root.addChild(footer);
   root.addChild(editor);
 
-  /** Accumulated assistant text per run; ChatLog wants the full string. */
-  const runText = new Map<string, string>();
+  /** Routes streamed chunks into chat-log runs; see stream-render.ts. */
+  const stream = new StreamRouter({
+    update: (runId, text) => chatLog.updateAssistant(text, runId),
+    finalize: (runId, text) => chatLog.finalizeAssistant(text, runId),
+  });
   let pending: Pending | null = null;
   let busy = false;
   let model = "…";
-  /** A summary from /compact, waiting to be prepended to the next message. */
+  /** Context waiting to be prepended to the next message, and what it is. */
   let carried: string | null = null;
+  let carriedLabel = "context";
+  /** Cursor's own slash commands, which arrive by notification after connect. */
+  let cursorCommands: CommandEntry[] = [];
+  let userCommands: UserCommand[] = await loadUserCommands(opts.profilePaths.commandsDir);
+  /** The on-disk session being recorded, and its id. */
+  let sessionId = newSessionId();
+  /** The header is written on the first real turn, not on an idle TUI. */
+  let recordStarted = false;
+  /** True while session/load replays history, so the replay is not re-rendered. */
+  let replaying = false;
 
   let goal: Goal | null = await readGoal(opts.profilePaths.goalFile);
   const { allow, deny } = await readPolicyFromConfig(opts.profilePaths.cursorConfigDir);
@@ -135,7 +162,8 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
       const queuedPart = queuedCount === 0 ? "" : ` · ${tuiTheme.accent(`${queuedCount} queued`)}`;
       // Say so while a summary is pending: the next message carries it, and
       // that is otherwise invisible.
-      const carriedPart = carried === null ? "" : ` · ${tuiTheme.accentSoft("summary pending")}`;
+      const carriedPart =
+        carried === null ? "" : ` · ${tuiTheme.accentSoft(`${carriedLabel} pending`)}`;
       const escHint = busy || loopRunning ? ` ${tuiTheme.dim("esc cancels")}` : "";
       footer.setText(
         `${state}  ${tuiTheme.dim(`${opts.profile} · ${model} · ctx unknown`)}` +
@@ -144,6 +172,9 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
     }
     tui.requestRender();
   };
+
+  /** Reassigned once commandContext exists; the backend callback needs it first. */
+  let refreshCompletions = (): void => {};
 
   const store = new ApprovalStore({
     grantsFile: opts.profilePaths.grantsFile,
@@ -180,11 +211,27 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
     ...(opts.binary !== undefined ? { binary: opts.binary } : {}),
     resolvePermission,
     onChunk: (_key, kind, text) => {
-      if (kind === "thought") return; // streamed but not shown in this version
-      const runId = "turn";
-      const next = (runText.get(runId) ?? "") + text;
-      runText.set(runId, next);
-      chatLog.updateAssistant(next, runId);
+      if (replaying) return;
+      stream.chunk(kind, text);
+      tui.requestRender();
+    },
+    onTool: (_key, ev) => {
+      if (replaying) return;
+      renderToolEvent(
+        {
+          startTool: (id, name, args) => void chatLog.startTool(id, name, args),
+          updateToolResult: (id, result, o) => void chatLog.updateToolResult(id, result, o),
+        },
+        ev,
+      );
+      tui.requestRender();
+    },
+    onCommands: (commands) => {
+      // Cursor advertises these after the session opens, so the autocomplete
+      // has to be rebuilt rather than built once at startup.
+      cursorCommands = commands;
+      refreshCompletions();
+      chatLog.addSystem(`${commands.length} Cursor commands available (type / to see them).`);
       tui.requestRender();
     },
   });
@@ -238,18 +285,44 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
     tui.requestRender();
   };
 
+  const sessionsDir = opts.profilePaths.sessionsDir;
+
+  /** Record the turn on disk so /resume can replay it in a later run. */
+  const persist = async (entry: { role: "user" | "assistant"; text: string }): Promise<void> => {
+    try {
+      if (!recordStarted) {
+        await startSession(sessionsDir, {
+          id: sessionId,
+          acpSessionId: backend.acpSessionId(SESSION_KEY) ?? "",
+          cwd: opts.cwd,
+          startedAt: Date.now(),
+        });
+        recordStarted = true;
+      }
+      await appendTurn(sessionsDir, sessionId, entry);
+    } catch {
+      // History is a convenience; never fail a turn over it.
+    }
+  };
+
   /** Send one turn to the agent and stream the reply into the log. */
   const send = async (text: string): Promise<string> => {
-    runText.delete("turn");
+    stream.beginTurn();
     turns += 1;
     // A carried summary is cleared only once its turn has gone out: dropping it
     // on a failed send would lose the one record of the compacted session.
     const summary = carried;
     const message = summary === null ? text : carriedMessage(summary, text);
+    await persist({ role: "user", text: message });
     await backend.sendChat({ sessionKey: SESSION_KEY, message });
     carried = null;
     setFooter();
-    return runText.get("turn") ?? "";
+    // The reply may still have an open reasoning run if the turn produced no
+    // message at all, so close it before reading the text.
+    stream.closeThought();
+    const reply = stream.reply();
+    if (reply !== "") await persist({ role: "assistant", text: reply });
+    return reply;
   };
 
   // Queueing and Esc-cancel live in TurnController: it is a state machine, and
@@ -315,11 +388,77 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
     newSession: async () => {
       await backend.resetSession(SESSION_KEY);
       chatLog.clearAll();
-      runText.clear();
+      stream.clear();
       turns = 0;
       // /clear means start empty; inheriting an earlier summary would not be.
       carried = null;
+      // A new ACP session cannot be resumed through the old record's id, so it
+      // gets a record of its own.
+      sessionId = newSessionId();
+      recordStarted = false;
       setFooter();
+    },
+    sendPrompt: (text) => {
+      controller.submit(text);
+    },
+    thinking: () => stream.showsThinking,
+    setThinking: (on) => {
+      stream.setThinking(on);
+    },
+    cursorCommands: () =>
+      cursorCommands.map((c) => ({ name: c.name, description: c.description ?? "" })),
+    userCommands: () => userCommands,
+    listSessions: async () => await listSavedSessions(sessionsDir),
+    resume: async (selector) => {
+      const all = await listSavedSessions(sessionsDir);
+      const picked = resolveSelector(all, selector);
+      if (picked === undefined) return { kind: "not-found", selector };
+      if (picked.acpSessionId === "") {
+        return { kind: "failed", reason: "that record has no Cursor session id" };
+      }
+      const file = await readSession(sessionsDir, picked.id);
+      if (file === null) return { kind: "failed", reason: "the transcript could not be read" };
+      let mode: "native" | "replayed" = "native";
+      try {
+        // Suppress rendering: per the ACP spec the agent replays the whole
+        // conversation as session/update notifications during a load, and we
+        // replay our own copy below. Rendering both would duplicate it.
+        replaying = true;
+        await backend.resumeSession(SESSION_KEY, picked.acpSessionId, file.entries);
+      } catch {
+        // Cursor advertises loadSession but refuses ids it wrote itself, so a
+        // failure here is expected rather than exceptional. Fall back to a
+        // fresh session carrying the transcript as text: the conversation is
+        // ours on disk, so resume does not depend on the agent's cooperation.
+        mode = "replayed";
+        try {
+          await backend.resetSession(SESSION_KEY);
+        } catch (err) {
+          return { kind: "failed", reason: err instanceof Error ? err.message : String(err) };
+        }
+      } finally {
+        replaying = false;
+      }
+      chatLog.clearAll();
+      stream.clear();
+      for (const entry of file.entries) {
+        if (entry.role === "user") chatLog.addUser(entry.text);
+        else if (entry.role === "assistant") chatLog.finalizeAssistant(entry.text, entry.text);
+      }
+      turns = picked.turns;
+      carried = mode === "native" ? null : renderTranscript(file.entries);
+      carriedLabel = "transcript";
+      if (mode === "native") {
+        // Continue appending to the record we just re-opened.
+        sessionId = picked.id;
+        recordStarted = true;
+      } else {
+        // A new ACP session id means a new record; the old file stays intact.
+        sessionId = newSessionId();
+        recordStarted = false;
+      }
+      setFooter();
+      return { kind: "resumed", session: picked, mode };
     },
     busy: () => controller.busy,
     compact: async (focus) => {
@@ -333,9 +472,12 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
       if (!isPlausibleSummary(summary)) return { kind: "unusable", reply: summary };
       await backend.resetSession(SESSION_KEY);
       chatLog.clearAll();
-      runText.clear();
+      stream.clear();
       turns = 0;
       carried = summary;
+      carriedLabel = "summary";
+      sessionId = newSessionId();
+      recordStarted = false;
       setFooter();
       return { kind: "compacted", turns: before, summary };
     },
@@ -376,9 +518,12 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
     },
   };
 
-  editor.setAutocompleteProvider?.(
-    new CombinedAutocompleteProvider(buildCommands(commandContext), opts.cwd),
-  );
+  refreshCompletions = (): void => {
+    editor.setAutocompleteProvider?.(
+      new CombinedAutocompleteProvider(buildCommands(commandContext), opts.cwd),
+    );
+  };
+  refreshCompletions();
 
   editor.onSubmit = (value: string) => {
     const text = value.trim();

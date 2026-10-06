@@ -43,10 +43,36 @@ interface SessionRecord {
   acpSessionId: string;
   createdAt: number;
   updatedAt: number;
-  /** Accumulated assistant/thought text, so loadHistory has something real. */
-  transcript: { role: "assistant" | "thought"; text: string }[];
+  /** Accumulated turn text, so loadHistory and /resume have something real. */
+  transcript: TranscriptEntry[];
   model?: string;
   title?: string;
+}
+
+export type TranscriptEntry = { role: "user" | "assistant" | "thought"; text: string };
+
+/**
+ * A tool call, as the view needs it.
+ *
+ * ACP sends `tool_call` once and then `tool_call_update` repeatedly against the
+ * same `toolCallId`, so the view upserts rather than appends.
+ */
+export interface ToolEvent {
+  phase: "start" | "update";
+  toolCallId: string;
+  /** Human title from the agent, e.g. "Read src/cli.ts". */
+  title?: string;
+  /** The agent's own tool name when it sends one; falls back to `kind`. */
+  name?: string;
+  kind?: string;
+  status?: "pending" | "in_progress" | "completed" | "failed";
+  /** Arguments, when the agent chose to echo them. */
+  rawInput?: unknown;
+  rawOutput?: unknown;
+  /** Flattened text of the content blocks, including a summary of any diff. */
+  output?: string;
+  /** Files the call touched, for the header line. */
+  locations?: string[];
 }
 
 export interface AcpBackendOptions {
@@ -55,6 +81,10 @@ export interface AcpBackendOptions {
   resolvePermission?: PermissionResolver;
   /** Called for each streamed chunk so a view can render incrementally. */
   onChunk?: (sessionKey: string, kind: "message" | "thought", text: string) => void;
+  /** Called for every tool-call lifecycle event. */
+  onTool?: (sessionKey: string, ev: ToolEvent) => void;
+  /** Called when Cursor advertises its slash-command catalogue. */
+  onCommands?: (commands: CommandEntry[]) => void;
   binary?: string;
 }
 
@@ -115,7 +145,19 @@ export class AcpTuiBackend implements Partial<TuiBackend> {
       case "available_commands_update": {
         // Cursor's slash-command catalogue, surfaced through listCommands.
         const raw = update.availableCommands ?? update.commands;
-        if (Array.isArray(raw)) this.commands = raw.map(toCommandEntry).filter(isCommand);
+        if (Array.isArray(raw)) {
+          this.commands = raw.map(toCommandEntry).filter(isCommand);
+          this.opts.onCommands?.(this.commands);
+        }
+        return;
+      }
+      case "tool_call":
+      case "tool_call_update": {
+        if (key === undefined) return;
+        const ev = toToolEvent(update, kind === "tool_call" ? "start" : "update");
+        if (ev === null) return;
+        if (rec !== undefined) rec.updatedAt = Date.now();
+        this.opts.onTool?.(key, ev);
         return;
       }
       default:
@@ -157,6 +199,11 @@ export class AcpTuiBackend implements Partial<TuiBackend> {
     }
     if (rec === undefined) throw new Error(`could not open session ${opts.sessionKey}`);
 
+    // Record the user's turn too: without it the transcript cannot be replayed
+    // on resume, since it would hold only one side of the conversation.
+    rec.transcript.push({ role: "user", text: opts.message });
+    rec.updatedAt = Date.now();
+
     const runId = opts.runId ?? crypto.randomUUID();
     const ctl = new AbortController();
     this.runs.set(runId, ctl);
@@ -178,6 +225,44 @@ export class AcpTuiBackend implements Partial<TuiBackend> {
     for (const id of ids) this.runs.get(id)?.abort();
     await this.client.cancel(rec.acpSessionId);
     return { ok: true, aborted: ids.length > 0, runIds: ids };
+  }
+
+  /** The full transcript, for persistence and replay on resume. */
+  transcriptOf(key: string): readonly TranscriptEntry[] {
+    return this.sessions.get(key)?.transcript ?? [];
+  }
+
+  /** The ACP session id, which is what `session/load` resumes against. */
+  acpSessionId(key: string): string | undefined {
+    return this.sessions.get(key)?.acpSessionId;
+  }
+
+  /**
+   * Re-open a previous ACP session and seed our record with its transcript.
+   *
+   * `loadSession` is advertised by Cursor (`agentCapabilities.loadSession`).
+   * Per the spec the agent replays the conversation as `session/update`
+   * notifications during the load, so the caller must suppress rendering while
+   * this runs or the replay lands in the log twice.
+   */
+  async resumeSession(
+    key: string,
+    acpSessionId: string,
+    transcript: TranscriptEntry[],
+  ): Promise<void> {
+    await this.start();
+    const old = this.sessions.get(key);
+    if (old !== undefined) this.byAcpId.delete(old.acpSessionId);
+    const now = Date.now();
+    this.sessions.set(key, {
+      key,
+      acpSessionId,
+      createdAt: now,
+      updatedAt: now,
+      transcript: [...transcript],
+    });
+    this.byAcpId.set(acpSessionId, key);
+    await this.client.loadSession(acpSessionId, this.opts.cwd);
   }
 
   async loadHistory(opts: { sessionKey: string; limit?: number }): Promise<unknown> {
@@ -432,4 +517,87 @@ function toCommandEntry(raw: unknown): CommandEntry | undefined {
 
 function isCommand(v: CommandEntry | undefined): v is CommandEntry {
   return v !== undefined;
+}
+
+const TOOL_STATUSES = new Set(["pending", "in_progress", "completed", "failed"]);
+
+/**
+ * Flatten `ToolCallContent[]` into displayable text.
+ *
+ * Three block types exist. `content` carries ordinary content blocks, `terminal`
+ * references a terminal we never created (we advertise no terminal methods, so
+ * it can only be reported, not read), and `diff` carries oldText/newText for a
+ * path. A diff is summarised to a line count here rather than rendered: real
+ * diff rendering is its own piece of work, and dropping the block silently
+ * would make an edit look like it did nothing.
+ */
+export function flattenToolContent(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const block of content) {
+    if (block === null || typeof block !== "object") continue;
+    const b = block as {
+      type?: unknown;
+      content?: unknown;
+      text?: unknown;
+      path?: unknown;
+      oldText?: unknown;
+      newText?: unknown;
+      terminalId?: unknown;
+    };
+    if (b.type === "diff") {
+      const path = typeof b.path === "string" ? b.path : "file";
+      const before = typeof b.oldText === "string" ? b.oldText : "";
+      const after = typeof b.newText === "string" ? b.newText : "";
+      const removed = before === "" ? 0 : before.split("\n").length;
+      const added = after === "" ? 0 : after.split("\n").length;
+      parts.push(`${path}  +${added} -${removed}`);
+      continue;
+    }
+    if (b.type === "terminal") {
+      const id = typeof b.terminalId === "string" ? b.terminalId : "";
+      parts.push(id === "" ? "[terminal]" : `[terminal ${id}]`);
+      continue;
+    }
+    // type: "content" nests a content block; some agents inline text directly.
+    const text = extractText(b.content) || extractText(b);
+    if (text !== "") parts.push(text);
+  }
+  return parts.join("\n");
+}
+
+/** Map a `tool_call` or `tool_call_update` payload onto a ToolEvent. */
+export function toToolEvent(
+  update: Record<string, unknown>,
+  phase: "start" | "update",
+): ToolEvent | null {
+  const id = update.toolCallId;
+  // Without an id there is nothing to upsert against, so the event is unusable.
+  if (typeof id !== "string" || id === "") return null;
+  const status =
+    typeof update.status === "string" && TOOL_STATUSES.has(update.status)
+      ? (update.status as ToolEvent["status"])
+      : undefined;
+  const output = flattenToolContent(update.content);
+  const locations = Array.isArray(update.locations)
+    ? update.locations
+        .map((l) =>
+          l !== null && typeof l === "object" && typeof (l as { path?: unknown }).path === "string"
+            ? (l as { path: string }).path
+            : undefined,
+        )
+        .filter((p): p is string => p !== undefined)
+    : undefined;
+  return {
+    phase,
+    toolCallId: id,
+    ...(typeof update.title === "string" ? { title: update.title } : {}),
+    ...(typeof update.name === "string" ? { name: update.name } : {}),
+    ...(typeof update.kind === "string" ? { kind: update.kind } : {}),
+    ...(status !== undefined ? { status } : {}),
+    ...(update.rawInput !== undefined ? { rawInput: update.rawInput } : {}),
+    ...(update.rawOutput !== undefined ? { rawOutput: update.rawOutput } : {}),
+    ...(output !== "" ? { output } : {}),
+    ...(locations !== undefined && locations.length > 0 ? { locations } : {}),
+  };
 }

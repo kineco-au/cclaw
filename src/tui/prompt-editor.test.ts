@@ -43,6 +43,13 @@ function commandContext(): CommandContext {
     runLoop: async () => {},
     busy: () => false,
     compact: async () => ({ kind: "nothing" }),
+    sendPrompt: () => {},
+    thinking: () => false,
+    setThinking: () => {},
+    cursorCommands: () => [],
+    userCommands: () => [],
+    listSessions: async () => [],
+    resume: async (selector) => ({ kind: "not-found", selector }),
   };
 }
 

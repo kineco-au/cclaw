@@ -17,7 +17,7 @@ cclaw doctor           # diagnose dependencies, auth, sandbox and policy
 
 | Command                                                             | What it does                                                                                 |
 | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `cclaw` / `cclaw chat`                                              | the chat TUI (our UI, Cursor over ACP); `/compact` summarises a long session                 |
+| `cclaw` / `cclaw chat`                                              | the chat TUI (our UI, Cursor over ACP)                                                       |
 | `cclaw raw [-- …]`                                                  | Cursor's own TUI under a cclaw profile. **The only mode with a live context-window figure.** |
 | `cclaw setup`                                                       | create the profile and seed its policy; safe to re-run                                       |
 | `cclaw doctor [--deep]`                                             | dependencies, ACP, auth, plan tier, sandbox support, hook sources                            |
@@ -26,6 +26,58 @@ cclaw doctor           # diagnose dependencies, auth, sandbox and policy
 | `cclaw grant list\|add\|rm\|block\|prune`                           | tool consent                                                                                 |
 | `cclaw goal show\|set\|clear`                                       | a standing objective, injected as a Cursor rule                                              |
 | `cclaw loop [prompt] [--every 5m] [--max N] [--budget 2h] [--once]` | unattended iteration                                                                         |
+
+## Slash commands
+
+Type `/` for the list; Tab completes names and arguments. Three sources are
+merged, and ours win a name collision so `/model` always stays the switcher:
+
+| Source   | Where it comes from                                                                                                        |
+| -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| built in | cclaw itself: `/model` `/mode` `/compact` `/resume` `/thinking` `/goal` `/loop` `/usage` `/grant` `/clear` `/help` `/exit` |
+| your own | one markdown file per command in `<profile>/commands/`                                                                     |
+| Cursor's | whatever the session advertises, currently 39                                                                              |
+
+A command of your own is a markdown file whose body is the prompt:
+
+```markdown
+---
+description: review the staged diff
+argument-hint: [path]
+---
+
+Review $ARGUMENTS and list only real defects.
+```
+
+`$ARGUMENTS` takes everything after the command, `$1`…`$9` take single words,
+and a template with no placeholder gets the arguments appended. An unfilled
+placeholder takes its preceding space with it, so a bare `/review` reads as a
+sentence. Cursor's own commands are forwarded verbatim for Cursor to parse.
+
+## Watching the work
+
+Tool calls render as they run: the command or file, then its output, with
+failures marked. `/thinking on` additionally streams the model's reasoning,
+which is off by default because it is long and usually noise. Reasoning streams
+either way; only rendering is optional.
+
+Diffs are summarised as `path +added -removed` rather than rendered in full.
+
+## Resuming
+
+Every turn is appended to `<profile>/sessions/<id>.jsonl`, so a conversation
+survives leaving the TUI. `/resume` lists what is saved and `/resume 2` reopens
+one.
+
+Resume does **not** depend on Cursor restoring its own session, because it will
+not. Cursor advertises `loadSession: true` and writes a session record under
+`CURSOR_CONFIG_DIR/acp-sessions/<id>/meta.json`, but that record holds only
+`{schemaVersion, cwd, title}` — no conversation — and `session/load` answers
+`Session "<id>" not found` for ids Cursor itself wrote. So cclaw tries the
+native path, and when it is refused falls back to replaying its own transcript
+into a fresh session as carried context. It says which happened. The transcript
+is ours on disk either way; the difference is whether the model remembers it or
+is reading it.
 
 ## Context and compaction
 
@@ -138,11 +190,14 @@ elsewhere.
 These are properties of the Cursor CLI, established by testing against it, not
 things left unfinished.
 
-**1. No context-window figure in `cclaw chat`.** Cursor exposes
-`context_window_size` only through its `statusLine`, which exists inside its own
-TUI. Over ACP no token, usage or context field appears in any event, and none is
-advertised in `agentCapabilities`. So `cclaw chat` shows `ctx unknown`, and
-`cclaw raw` shows the real figure. Where a window size can be _derived_ (the
+**1. No context-window figure in `cclaw chat`.** Not an ACP limitation, as
+earlier versions of this file claimed: the protocol defines a `usage_update`
+event carrying exactly `{used, size, cost}`. **This Cursor build never sends
+one.** It negotiates protocol v1 while the SDK is v2, which is the likely
+reason, and it advertises nothing for usage in `agentCapabilities`. cclaw does
+not yet read the event, since nothing has ever sent one. `context_window_size` is
+reachable only through Cursor's `statusLine`, which exists inside its own TUI,
+so `cclaw chat` shows `ctx unknown` and `cclaw raw` shows the real figure. Where a window size can be _derived_ (the
 model name encodes `1M`, or a `context=` parameter is set) `cclaw model info`
 reports it and labels it as derived. It is never invented.
 

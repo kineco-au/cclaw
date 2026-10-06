@@ -44,6 +44,10 @@ export interface ProfilePaths {
   dirsFile: string;
   goalFile: string;
   historyFile: string;
+  /** Session transcripts, one JSONL file each, for /resume. */
+  sessionsDir: string;
+  /** User-defined slash commands: one markdown file per command. */
+  commandsDir: string;
   contextCacheFile: string;
   backupsDir: string;
   logDir: string;
@@ -62,6 +66,8 @@ export function profilePaths(paths: Paths, name: string): ProfilePaths {
     dirsFile: join(dir, "dirs.json"),
     goalFile: join(dir, "goal.json"),
     historyFile: join(dir, "history.jsonl"),
+    sessionsDir: join(dir, "sessions"),
+    commandsDir: join(dir, "commands"),
     contextCacheFile: join(dir, "context-cache.json"),
     backupsDir: join(dir, "backups"),
     logDir: join(dir, "log"),

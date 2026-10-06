@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildCommands,
+  describeSession,
   parseSlash,
   runSlash,
   shortModelLabel,
@@ -53,6 +54,13 @@ function ctx(overrides: Partial<CommandContext> = {}): { c: CommandContext; said
     },
     busy: () => false,
     compact: async () => ({ kind: "compacted", turns: 3, summary: "we did things" }),
+    sendPrompt: (t) => said.push(`<prompt>${t}`),
+    thinking: () => false,
+    setThinking: () => {},
+    cursorCommands: () => [],
+    userCommands: () => [],
+    listSessions: async () => [],
+    resume: async (selector) => ({ kind: "not-found", selector }),
     ...overrides,
   };
   return { c, said };
@@ -378,5 +386,235 @@ describe("/compact", () => {
     const entry = buildCommands(ctx().c).find((cmd) => cmd.name === "compact");
     expect(entry).toBeDefined();
     expect(entry?.description).toContain("summarise");
+  });
+});
+
+describe("/thinking", () => {
+  test("reports the current state with no argument", async () => {
+    const { c, said } = ctx();
+    await runSlash("/thinking", c);
+    expect(said.join()).toContain("hidden");
+  });
+
+  test("turns reasoning on and off", async () => {
+    let on = false;
+    const { c, said } = ctx({ thinking: () => on, setThinking: (v) => void (on = v) });
+    await runSlash("/thinking on", c);
+    expect(on).toBe(true);
+    await runSlash("/thinking off", c);
+    expect(on).toBe(false);
+    expect(said.join()).toContain("Reasoning");
+  });
+
+  test("rejects anything but on and off", async () => {
+    let calls = 0;
+    const { c, said } = ctx({ setThinking: () => void (calls += 1) });
+    await runSlash("/thinking maybe", c);
+    expect(calls).toBe(0);
+    expect(said.join()).toContain("Usage:");
+  });
+
+  test("is case-insensitive", async () => {
+    let on = false;
+    const { c } = ctx({ setThinking: (v) => void (on = v) });
+    await runSlash("/thinking ON", c);
+    expect(on).toBe(true);
+  });
+
+  test("marks the active state in completions", async () => {
+    const entry = buildCommands(ctx({ thinking: () => true }).c).find((x) => x.name === "thinking");
+    const items = (await entry?.getArgumentCompletions?.("")) ?? [];
+    const labels = items.map((i) => i.label);
+    expect(labels).toContain("on ✓");
+    expect(labels).toContain("off");
+  });
+});
+
+describe("/resume", () => {
+  const sessions = [
+    {
+      id: "aaa",
+      acpSessionId: "x",
+      cwd: "/r",
+      startedAt: 0,
+      updatedAt: 1_760_000_000_000,
+      turns: 4,
+      firstPrompt: "fix the build",
+    },
+    {
+      id: "bbb",
+      acpSessionId: "y",
+      cwd: "/r",
+      startedAt: 0,
+      updatedAt: 1_750_000_000_000,
+      turns: 1,
+    },
+  ];
+
+  test("lists sessions when given no argument", async () => {
+    const { c, said } = ctx({ listSessions: async () => sessions });
+    await runSlash("/resume", c);
+    expect(said.join("\n")).toContain("fix the build");
+    expect(said.join("\n")).toContain("1.");
+  });
+
+  test("says so when nothing has been saved", async () => {
+    const { c, said } = ctx({ listSessions: async () => [] });
+    await runSlash("/resume", c);
+    expect(said.join()).toContain("No saved sessions");
+  });
+
+  test("says so when the transcript had to be replayed instead of reopened", async () => {
+    const { c, said } = ctx({
+      listSessions: async () => sessions,
+      resume: async () => ({ kind: "resumed", session: sessions[0]!, mode: "replayed" }),
+    });
+    await runSlash("/resume 1", c);
+    expect(said.join()).toContain("Resumed");
+    expect(said.join()).toContain("carried into your next message");
+  });
+
+  test("stays quiet about the mechanism on a native resume", async () => {
+    const { c, said } = ctx({
+      listSessions: async () => sessions,
+      resume: async () => ({ kind: "resumed", session: sessions[0]!, mode: "native" }),
+    });
+    await runSlash("/resume 1", c);
+    expect(said.join()).not.toContain("carried into");
+  });
+
+  test("passes the selector through and reports success", async () => {
+    const seen: string[] = [];
+    const { c, said } = ctx({
+      listSessions: async () => sessions,
+      resume: async (sel) => {
+        seen.push(sel);
+        return { kind: "resumed", session: sessions[0]!, mode: "native" };
+      },
+    });
+    await runSlash("/resume 1", c);
+    expect(seen).toEqual(["1"]);
+    expect(said.join()).toContain("Resumed");
+  });
+
+  test("reports an unmatched selector", async () => {
+    const { c, said } = ctx({ listSessions: async () => sessions });
+    await runSlash("/resume zzz", c);
+    expect(said.join()).toContain("No session matches 'zzz'");
+  });
+
+  test("surfaces the reason when the resume itself fails", async () => {
+    const { c, said } = ctx({
+      listSessions: async () => sessions,
+      resume: async () => ({ kind: "failed", reason: "agent refused" }),
+    });
+    await runSlash("/resume 1", c);
+    expect(said.join()).toContain("agent refused");
+  });
+
+  test("refuses while a turn is in flight, and does not resume", async () => {
+    let calls = 0;
+    const { c, said } = ctx({
+      busy: () => true,
+      resume: async (selector) => {
+        calls += 1;
+        return { kind: "not-found", selector };
+      },
+    });
+    await runSlash("/resume 1", c);
+    expect(calls).toBe(0);
+    expect(said.join()).toContain("Esc cancels");
+  });
+
+  test("describeSession shows the turn count and prompt", () => {
+    const line = describeSession(sessions[0]!);
+    expect(line).toContain("4 turns");
+    expect(line).toContain("fix the build");
+  });
+
+  test("describeSession truncates a long prompt and flattens newlines", () => {
+    const line = describeSession({ ...sessions[0]!, firstPrompt: `${"x".repeat(80)}\nmore` });
+    expect(line).toContain("…");
+    expect(line).not.toContain("\n");
+  });
+
+  test("describeSession tolerates a session with no prompt", () => {
+    expect(describeSession(sessions[1]!)).toContain("(no prompt)");
+  });
+});
+
+describe("discovered commands", () => {
+  const cursor = [
+    { name: "cursor-thing", description: "a Cursor built-in" },
+    { name: "model", description: "Cursor's own model command" },
+  ];
+  const mine = [
+    {
+      name: "review",
+      description: "review the diff",
+      template: "Review $ARGUMENTS",
+      path: "/p/review.md",
+    },
+    { name: "clear", description: "shadow attempt", template: "nope", path: "/p/clear.md" },
+  ];
+
+  test("lists Cursor's commands alongside ours", () => {
+    const names = buildCommands(ctx({ cursorCommands: () => cursor }).c).map((c) => c.name);
+    expect(names).toContain("cursor-thing");
+    expect(names).toContain("model");
+  });
+
+  test("ours win a name collision, so /model stays the switcher", () => {
+    const cmds = buildCommands(ctx({ cursorCommands: () => cursor }).c);
+    expect(cmds.filter((c) => c.name === "model")).toHaveLength(1);
+    expect(cmds.find((c) => c.name === "model")?.description).toBe(
+      "switch the model for this session",
+    );
+  });
+
+  test("a user's file wins over a Cursor command of the same name", () => {
+    const cmds = buildCommands(
+      ctx({
+        cursorCommands: () => [{ name: "review", description: "cursor review" }],
+        userCommands: () => mine,
+      }).c,
+    );
+    expect(cmds.filter((c) => c.name === "review")).toHaveLength(1);
+    expect(cmds.find((c) => c.name === "review")?.description).toBe("review the diff");
+  });
+
+  test("a user file cannot shadow a built-in", () => {
+    const cmds = buildCommands(ctx({ userCommands: () => mine }).c);
+    expect(cmds.find((c) => c.name === "clear")?.description).toBe("start a new session");
+  });
+
+  test("a user command sends its expanded template as a prompt", async () => {
+    const { c, said } = ctx({ userCommands: () => mine });
+    await runSlash("/review src/a.ts", c);
+    expect(said.join()).toContain("<prompt>Review src/a.ts");
+  });
+
+  test("a Cursor command is forwarded verbatim for Cursor to parse", async () => {
+    const { c, said } = ctx({ cursorCommands: () => cursor });
+    await runSlash("/cursor-thing arg here", c);
+    expect(said.join()).toContain("<prompt>/cursor-thing arg here");
+  });
+
+  test("a Cursor command with no argument keeps its leading slash", async () => {
+    const { c, said } = ctx({ cursorCommands: () => cursor });
+    await runSlash("/cursor-thing", c);
+    expect(said.join()).toContain("<prompt>/cursor-thing");
+  });
+
+  test("an unknown name is still reported rather than sent to the agent", async () => {
+    const { c, said } = ctx();
+    await runSlash("/nonsense", c);
+    expect(said.join()).toContain("Unknown command '/nonsense'");
+    expect(said.join()).not.toContain("<prompt>");
+  });
+
+  test("a description-less Cursor command still gets a label", () => {
+    const cmds = buildCommands(ctx({ cursorCommands: () => [{ name: "x", description: "" }] }).c);
+    expect(cmds.find((c) => c.name === "x")?.description).toBe("cursor command");
   });
 });

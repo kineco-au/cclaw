@@ -1,0 +1,645 @@
+<title>cclaw Transport Map</title>
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Chivo:wght@600;800&family=Source+Sans+3:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+/>
+<style>
+  /* Layout: a schematic band across the top, then one card per channel. */
+  :root {
+    --bg: #f4f6fa;
+    --surface: #ffffff;
+    --fg: #0d1b33;
+    --muted: #5a6782;
+    --hair: #d3dbe8;
+    --acp: #d1006c;
+    --cli: #2a5fbf;
+    --cfg: #0f7a6b;
+    --display: "Chivo", "Helvetica Neue", sans-serif;
+    --body: "Source Sans 3", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0a1020;
+      --surface: #121b2f;
+      --fg: #e6ecf7;
+      --muted: #94a3bf;
+      --hair: #2a3a56;
+      --acp: #ff57a3;
+      --cli: #7fa9f5;
+      --cfg: #3fd0b5;
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0a1020;
+    --surface: #121b2f;
+    --fg: #e6ecf7;
+    --muted: #94a3bf;
+    --hair: #2a3a56;
+    --acp: #ff57a3;
+    --cli: #7fa9f5;
+    --cfg: #3fd0b5;
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--body);
+    font-size: 16px;
+    line-height: 1.55;
+  }
+
+  .wrap {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding-inline: 20px;
+    padding-block: 44px 72px;
+  }
+
+  header {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 30px;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: clamp(28px, 5vw, 42px);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    margin: 0;
+    max-width: 62ch;
+    color: var(--muted);
+    font-size: 17px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--acp);
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    margin: 0 0 18px;
+    padding: 0;
+    list-style: none;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .legend li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .swatch {
+    width: 22px;
+    height: 0;
+    border-top-width: 2px;
+    border-top-style: solid;
+    flex: none;
+  }
+
+  .s-acp {
+    border-color: var(--acp);
+  }
+
+  .s-cli {
+    border-color: var(--cli);
+  }
+
+  .s-cfg {
+    border-color: var(--cfg);
+  }
+
+  .s-dash {
+    border-color: var(--acp);
+    border-top-style: dashed;
+  }
+
+  .figure {
+    background: var(--surface);
+    border: 1px solid var(--hair);
+    border-radius: 14px;
+    overflow-x: auto;
+    padding: 8px;
+    margin-bottom: 14px;
+  }
+
+  .figure svg {
+    display: block;
+    min-width: 760px;
+    width: 100%;
+    height: auto;
+  }
+
+  figcaption {
+    color: var(--muted);
+    font-size: 13.5px;
+    margin-bottom: 40px;
+    max-width: 70ch;
+  }
+
+  /* --- SVG schematic --- */
+  .bx {
+    fill: var(--surface);
+    stroke: var(--hair);
+    stroke-width: 1.5;
+  }
+
+  .bx-main {
+    stroke: var(--fg);
+    stroke-width: 2;
+  }
+
+  .bx-acp {
+    stroke: var(--acp);
+  }
+
+  .bx-cli {
+    stroke: var(--cli);
+  }
+
+  .bx-cfg {
+    stroke: var(--cfg);
+  }
+
+  .bx-dash {
+    stroke-dasharray: 5 4;
+  }
+
+  .ln {
+    fill: none;
+    stroke-width: 1.7;
+  }
+
+  .ln-acp {
+    stroke: var(--acp);
+  }
+
+  .ln-cli {
+    stroke: var(--cli);
+  }
+
+  .ln-cfg {
+    stroke: var(--cfg);
+  }
+
+  .ln-dash {
+    stroke-dasharray: 6 5;
+  }
+
+  #a-acp path {
+    fill: var(--acp);
+  }
+
+  #a-cli path {
+    fill: var(--cli);
+  }
+
+  #a-cfg path {
+    fill: var(--cfg);
+  }
+
+  .hd {
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 500;
+  }
+
+  .hd-acp {
+    fill: var(--acp);
+  }
+
+  .hd-cli {
+    fill: var(--cli);
+  }
+
+  .hd-cfg {
+    fill: var(--cfg);
+  }
+
+  .hd-fg {
+    fill: var(--fg);
+  }
+
+  .big {
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: 24px;
+    fill: var(--fg);
+  }
+
+  .lbl {
+    font-family: var(--mono);
+    font-size: 11.5px;
+  }
+
+  .lbl-acp {
+    fill: var(--acp);
+  }
+
+  .lbl-cli {
+    fill: var(--cli);
+  }
+
+  .lbl-cfg {
+    fill: var(--cfg);
+  }
+
+  .mut {
+    font-family: var(--body);
+    font-size: 12.5px;
+    fill: var(--muted);
+  }
+
+  .tag {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    fill: var(--muted);
+  }
+
+  /* --- channel cards --- */
+  .channels {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    margin-bottom: 44px;
+  }
+
+  .ch {
+    background: var(--surface);
+    border: 1px solid var(--hair);
+    border-radius: 12px;
+    padding: 20px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .ch-acp {
+    border-left: 3px solid var(--acp);
+  }
+
+  .ch-cli {
+    border-left: 3px solid var(--cli);
+  }
+
+  .ch-cfg {
+    border-left: 3px solid var(--cfg);
+  }
+
+  .ch h3 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 15px;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .chip {
+    align-self: flex-start;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+  }
+
+  .c-acp {
+    color: var(--acp);
+  }
+
+  .c-cli {
+    color: var(--cli);
+  }
+
+  .c-cfg {
+    color: var(--cfg);
+  }
+
+  .ch p {
+    margin: 0;
+    font-size: 14.5px;
+  }
+
+  .refs {
+    margin: 2px 0 0;
+    padding: 0;
+    list-style: none;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    overflow-wrap: anywhere;
+  }
+
+  h2 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 22px;
+    letter-spacing: -0.01em;
+    margin: 0 0 4px;
+  }
+
+  .notes {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    border-top: 1px solid var(--hair);
+    padding-top: 26px;
+  }
+
+  .note {
+    display: grid;
+    grid-template-columns: 150px 1fr;
+    gap: 6px 22px;
+    align-items: start;
+  }
+
+  .note > dt {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 3px;
+  }
+
+  .note > dd {
+    margin: 0;
+    font-size: 15px;
+    max-width: 68ch;
+    min-width: 0;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: color-mix(in srgb, var(--fg) 7%, transparent);
+    padding: 1px 5px;
+    border-radius: 4px;
+    overflow-wrap: anywhere;
+  }
+
+  footer {
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 1px solid var(--hair);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    line-height: 1.8;
+  }
+
+  @media (max-width: 620px) {
+    .note {
+      grid-template-columns: 1fr;
+      gap: 2px;
+    }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">cclaw architecture</span>
+    <h1>How cclaw talks to Cursor</h1>
+    <p class="standfirst">
+      Every model request runs through the Cursor CLI binary, so work bills through your Cursor
+      account and cclaw never handles a token. But one binary does five different jobs, and two of
+      the five channels are not the CLI at all.
+    </p>
+  </header>
+
+  <ul class="legend">
+    <li><span class="swatch s-acp"></span> ACP: long-lived, bidirectional</li>
+    <li><span class="swatch s-cli"></span> CLI: one-shot spawn</li>
+    <li><span class="swatch s-cfg"></span> Files: config on disk</li>
+    <li><span class="swatch s-dash"></span> Inbound: Cursor calls us</li>
+  </ul>
+
+  <figure class="figure">
+    <svg viewBox="0 0 980 700" role="img" aria-labelledby="dgm-title">
+      <title id="dgm-title">
+        Five communication channels between cclaw and the Cursor CLI: a long-lived ACP subprocess
+        over stdio, one-shot CLI probes, a terminal handoff for raw mode, Cursor's config files on
+        disk, and an inbound statusline call from Cursor back into cclaw.
+      </title>
+      <defs>
+        <marker id="a-acp" orient="auto" markerWidth="9" markerHeight="9" refX="6.5" refY="3"
+          viewBox="0 0 8 6">
+          <path d="M0,0 L7,3 L0,6 Z" />
+        </marker>
+        <marker id="a-cli" orient="auto" markerWidth="9" markerHeight="9" refX="6.5" refY="3"
+          viewBox="0 0 8 6">
+          <path d="M0,0 L7,3 L0,6 Z" />
+        </marker>
+        <marker id="a-cfg" orient="auto" markerWidth="9" markerHeight="9" refX="6.5" refY="3"
+          viewBox="0 0 8 6">
+          <path d="M0,0 L7,3 L0,6 Z" />
+        </marker>
+      </defs>
+
+      <!-- cclaw -->
+      <rect class="bx bx-main" x="40" y="48" width="180" height="340" rx="12" />
+      <text class="big" x="130" y="206" text-anchor="middle">cclaw</text>
+      <text class="mut" x="130" y="230" text-anchor="middle">Bun · TypeScript</text>
+      <text class="tag" x="130" y="76" text-anchor="middle">OUR PROCESS</text>
+
+      <!-- 1. ACP -->
+      <rect class="bx bx-acp" x="560" y="48" width="380" height="112" rx="10" />
+      <text class="hd hd-acp" x="582" y="80">agent acp</text>
+      <text class="mut" x="582" y="104">long-lived subprocess, one per session</text>
+      <text class="mut" x="582" y="126">prompts · streamed replies · permissions</text>
+      <path class="ln ln-acp" d="M224,96 H552" marker-end="url(#a-acp)" />
+      <text class="lbl lbl-acp" x="388" y="86" text-anchor="middle">spawn · JSON-RPC 2.0 / stdio</text>
+      <path class="ln ln-acp" d="M552,130 H228" marker-end="url(#a-acp)" />
+      <text class="lbl lbl-acp" x="388" y="150" text-anchor="middle">session/update · requestPermission</text>
+
+      <!-- 2. one-shot probes -->
+      <rect class="bx bx-cli" x="560" y="188" width="380" height="112" rx="10" />
+      <text class="hd hd-cli" x="582" y="218">agent status | about</text>
+      <text class="hd hd-cli" x="582" y="240">agent models | help acp</text>
+      <text class="mut" x="582" y="266">one-shot, exits immediately</text>
+      <text class="mut" x="582" y="286">metadata only, never a prompt</text>
+      <path class="ln ln-cli" d="M224,232 H552" marker-end="url(#a-cli)" />
+      <text class="lbl lbl-cli" x="388" y="222" text-anchor="middle">spawn · JSON on stdout</text>
+
+      <!-- 3. raw -->
+      <rect class="bx bx-cli" x="560" y="328" width="380" height="76" rx="10" />
+      <text class="hd hd-cli" x="582" y="358">agent &nbsp;(Cursor's own TUI)</text>
+      <text class="mut" x="582" y="382">terminal handed over, no protocol</text>
+      <path class="ln ln-cli" d="M224,358 H552" marker-end="url(#a-cli)" />
+      <text class="lbl lbl-cli" x="388" y="348" text-anchor="middle">exec · inherits the TTY</text>
+
+      <!-- 4. config files -->
+      <rect class="bx bx-cfg" x="300" y="468" width="460" height="124" rx="10" />
+      <text class="hd hd-cfg" x="322" y="498">profile config dir</text>
+      <text class="hd hd-fg" x="322" y="522" style="font-size: 12.5px">
+        cli-config.json · permissions.json · rules/
+      </text>
+      <text class="mut" x="322" y="546">we write it, Cursor reads it when it starts</text>
+      <text class="mut" x="322" y="568">CURSOR_CONFIG_DIR · CURSOR_DATA_DIR go in the env</text>
+      <path class="ln ln-cfg" d="M120,392 V522 H294" marker-end="url(#a-cfg)" />
+      <text class="lbl lbl-cfg" x="206" y="512" text-anchor="middle">write</text>
+      <path class="ln ln-cfg" d="M764,520 H880 V410" marker-end="url(#a-cfg)" />
+      <text class="lbl lbl-cfg" x="892" y="466">read</text>
+
+      <!-- 5. statusline, inbound -->
+      <rect class="bx bx-acp bx-dash" x="40" y="612" width="266" height="58" rx="10" />
+      <text class="hd hd-acp" x="58" y="640" style="font-size: 13.5px">cclaw statusline</text>
+      <text class="mut" x="58" y="660">the only live context-window figure</text>
+      <path class="ln ln-acp ln-dash" d="M930,410 V640 H312" marker-end="url(#a-acp)" />
+      <text class="lbl lbl-acp" x="624" y="632" text-anchor="middle">
+        spawns per refresh · payload on stdin
+      </text>
+    </svg>
+  </figure>
+  <figcaption>
+    Solid lines are process spawns. The config dir is the channel that is easy to miss and matters
+    most: policy takes effect because a file changed on disk, not because cclaw asked the CLI to
+    apply it.
+  </figcaption>
+
+  <div class="channels">
+    <article class="ch ch-acp">
+      <span class="chip c-acp">ACP</span>
+      <h3>agent acp</h3>
+      <p>
+        One subprocess for the life of the session, speaking JSON-RPC 2.0 over stdin and stdout
+        through <code>@agentclientprotocol/sdk</code>. All prompts, streamed replies and tool
+        consent ride this. It is the only bidirectional channel: <code>requestPermission</code>
+        arrives from Cursor and our resolver answers it.
+      </p>
+      <ul class="refs">
+        <li>src/acp/client.ts:92 — Bun.spawn([bin, "acp"])</li>
+        <li>src/acp/client.ts:292 — prompt()</li>
+      </ul>
+    </article>
+
+    <article class="ch ch-cli">
+      <span class="chip c-cli">CLI</span>
+      <h3>status · about · models · help acp</h3>
+      <p>
+        Short-lived invocations that answer one question and exit: who is signed in, which plan,
+        which models exist, whether <code>acp</code> is available on this build. These carry
+        metadata only. No prompt ever goes out this way.
+      </p>
+      <ul class="refs">
+        <li>src/cursor.ts:69 — runCursor()</li>
+        <li>src/cursor.ts:103 — status --format json</li>
+        <li>src/cursor.ts:132 — about --format json</li>
+        <li>src/models.ts:59 — models</li>
+      </ul>
+    </article>
+
+    <article class="ch ch-cli">
+      <span class="chip c-cli">RAW</span>
+      <h3>cclaw raw</h3>
+      <p>
+        A process handoff rather than a protocol. Cursor's own TUI takes the terminal, under a cclaw
+        profile. This is the mode that shows a real context-window figure, because that figure comes
+        from the statusline.
+      </p>
+      <ul class="refs">
+        <li>src/commands/raw.ts:109 — Bun.spawn([bin.path, …args])</li>
+      </ul>
+    </article>
+
+    <article class="ch ch-cfg">
+      <span class="chip c-cfg">FILES</span>
+      <h3>cli-config.json · permissions.json · rules/</h3>
+      <p>
+        Not the CLI at all. cclaw writes Cursor's own config files directly and Cursor reads them.
+        That is how the allowlist, the denylist and the standing goal are enforced. A profile is
+        just <code>CURSOR_CONFIG_DIR</code> and <code>CURSOR_DATA_DIR</code> in the spawned
+        process's environment, which is also why a running agent does not pick up a policy change.
+      </p>
+      <ul class="refs">
+        <li>src/policy/seed.ts · src/policy/templates.ts</li>
+        <li>src/goal.ts — rules/ for the standing goal</li>
+        <li>src/profile.ts:160 — env handoff</li>
+      </ul>
+    </article>
+
+    <article class="ch ch-acp">
+      <span class="chip c-acp">STATUS</span>
+      <h3>cclaw statusline</h3>
+      <p>
+        The one channel Cursor initiates. <code>cli-config.json</code> registers
+        <code>statusLine.command</code> as cclaw, and Cursor spawns it on every refresh with a JSON
+        payload on stdin. Today it is the only place a real context-window figure reaches cclaw,
+        which is why <code>/compact</code> has none to work with.
+      </p>
+      <ul class="refs">
+        <li>src/policy/templates.ts:43 — statusLine.command</li>
+        <li>src/statusline.ts — the payload we parse</li>
+      </ul>
+    </article>
+  </div>
+
+  <h2>What follows from this</h2>
+  <dl class="notes">
+    <div class="note">
+      <dt>No network of our own</dt>
+      <dd>
+        The only <code>https://</code> in non-vendored code is the install-command string in
+        <code>src/cursor.ts:12</code>. Every model request travels inside Cursor's process.
+      </dd>
+    </div>
+    <div class="note">
+      <dt>Policy is a file</dt>
+      <dd>
+        cclaw never asks the CLI to apply an allowlist. It writes <code>permissions.json</code> and
+        <code>cli-config.json</code>, and Cursor reads them on start. Enforcement is Cursor's; the
+        consent prompts in the TUI are ours.
+      </dd>
+    </div>
+    <div class="note">
+      <dt>Context is Cursor's</dt>
+      <dd>
+        Over ACP, cclaw sends only the latest message and Cursor keeps the thread. The protocol does
+        define a <code>usage_update</code> event carrying <code>{used, size, cost}</code>, but this
+        Cursor build never sends one, so the chat footer reads <code>ctx unknown</code> and
+        <code>/compact</code> works around it by asking the model to summarise itself.
+      </dd>
+    </div>
+    <div class="note">
+      <dt>One other binary</dt>
+      <dd>
+        <code>security</code>, for the macOS keychain, storing the per-profile API key cclaw then
+        passes as <code>CURSOR_API_KEY</code>. Cursor's own web login lives in a global keychain
+        slot cclaw does not touch, which is the limit of profile isolation.
+      </dd>
+    </div>
+  </dl>
+
+  <footer>
+    docs/architecture.html · verified against Cursor build 2026.08.11-e8db854<br />
+    file references are to this repository at the time of writing
+  </footer>
+</div>
