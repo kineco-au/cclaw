@@ -8,6 +8,7 @@ by `cursor-agent acp`, so work executes and bills through your Cursor account.
 
 ```
 ./install.sh          # check dependencies, sign in, seed policy
+./install.sh --check  # report readiness, change nothing
 cclaw                 # start the chat TUI
 cclaw raw             # Cursor's own TUI under a cclaw profile
 cclaw doctor          # diagnose dependencies, auth, sandbox and policy
@@ -259,6 +260,25 @@ rest `[plan]` rather than listing ~250 models you cannot run.
 **5. Unattended loops refuse all permissions.** Nobody is present to answer, so
 `cclaw loop` declines tool requests and reports what it would need. Every loop
 has a hard iteration count and a wall-clock budget.
+
+## Checking without installing
+
+```sh
+./install.sh --check
+```
+
+Runs every check the installer runs — Bun, the Cursor CLI, the hidden `acp`
+subcommand, the desktop app, `git`/`jq`, `PATH`, credentials and plan tier —
+and **changes nothing**. Anything it would otherwise offer to do is reported as
+`would offer: …` and declined. Exits `0` when cclaw could run and `1` when
+something is missing, so it works in CI.
+
+Use it instead of `cclaw doctor` when nothing is installed yet: `doctor` is
+cclaw code, so it needs Bun and `node_modules` to run at all. Once installed,
+`cclaw doctor --deep` goes further — it inspects policy, sandbox support and
+all five hook sources.
+
+`--dry-run` is accepted as a synonym.
 
 ## Uninstalling
 

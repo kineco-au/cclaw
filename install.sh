@@ -22,6 +22,7 @@ KEYCHAIN_SERVICE=cclaw
 ASSUME_YES=0
 DO_UNINSTALL=0
 DO_PURGE=0
+CHECK_ONLY=0
 
 usage() {
   cat << 'EOF'
@@ -29,11 +30,15 @@ cclaw installer
 
 USAGE
   ./install.sh [--yes]              install or repair
+  ./install.sh --check              report readiness, change nothing
   ./install.sh --uninstall [--purge]
   ./install.sh --help
 
 OPTIONS
   -y, --yes        answer every prompt with yes (for scripted runs)
+      --check      run every check, install and change nothing. Exits 0 when
+                   cclaw could run, 1 when something is missing. Works before
+                   anything is installed, unlike `cclaw doctor`.
       --uninstall  remove the cclaw command link
       --purge      with --uninstall, also remove profiles, grants, session
                    history and the cclaw keychain entries. Destroys data.
@@ -50,6 +55,7 @@ while (($# > 0)); do
     -y | --yes) ASSUME_YES=1 ;;
     --uninstall) DO_UNINSTALL=1 ;;
     --purge) DO_PURGE=1 ;;
+    --check | --dry-run) CHECK_ONLY=1 ;;
     -h | --help)
       usage
       exit 0
@@ -65,6 +71,12 @@ done
 
 if ((DO_PURGE && !DO_UNINSTALL)); then
   printf '%s\n\n' '--purge only applies with --uninstall' >&2
+  usage >&2
+  exit 2
+fi
+
+if ((CHECK_ONLY && DO_UNINSTALL)); then
+  printf '%s\n\n' '--check and --uninstall do opposite things; pick one' >&2
   usage >&2
   exit 2
 fi
@@ -89,6 +101,12 @@ step() { printf '\n%s==>%s %s\n' "$BLUE" "$RESET" "$*"; }
 
 ask() {
   local prompt=$1
+  # --check must never change anything, so every offer is declined before
+  # --yes is even consulted.
+  ((CHECK_ONLY)) && {
+    say "     ${DIM}would offer: ${prompt}${RESET}"
+    return 1
+  }
   ((ASSUME_YES)) && return 0
   [[ -t 0 ]] || return 1
   local reply
@@ -381,7 +399,12 @@ if [[ -n $CURSOR_BIN ]]; then
 fi
 
 # --- 7. Dependencies and the first profile ----------------------------------
-if ((FAILED == 0)) && have bun; then
+# Skipped entirely under --check: these three steps are the only ones that
+# write without asking first.
+if ((CHECK_ONLY)); then
+  step "dependencies and profile"
+  say "     ${DIM}would run: bun install, cclaw setup, link ~/.local/bin/cclaw${RESET}"
+elif ((FAILED == 0)) && have bun; then
   step "installing cclaw dependencies"
   (cd "$ROOT" && bun install) && ok "dependencies installed" || FAILED=1
 
@@ -401,6 +424,18 @@ fi
 
 # --- done -------------------------------------------------------------------
 step "summary"
+if ((CHECK_ONLY)); then
+  say "     ${DIM}check only — nothing was installed or changed${RESET}"
+  if ((FAILED)); then
+    err "not ready — resolve the items above, then run ./install.sh"
+    exit 1
+  fi
+  ok "ready to install"
+  say ""
+  say "  run ${BLUE}./install.sh${RESET} to set up dependencies, the profile and the cclaw command"
+  say ""
+  exit 0
+fi
 if ((FAILED)); then
   err "setup incomplete — resolve the items above and re-run ./install.sh"
   exit 1
