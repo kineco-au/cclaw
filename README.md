@@ -1,10 +1,7 @@
 # cclaw
 
-A Claude-Code-shaped terminal agent that runs on the **Cursor CLI**.
-
-The terminal UI is ported from [OpenClaw](https://github.com/openclaw/openclaw)
-(MIT) and driven over the [Agent Client Protocol](https://agentclientprotocol.com)
-by `cursor-agent acp`, so work executes and bills through your Cursor account.
+A Claude-Code-shaped terminal agent that runs on the **Cursor CLI**. Work
+executes and bills through your Cursor account.
 
 ```
 ./install.sh          # check dependencies, sign in, seed policy
@@ -12,34 +9,36 @@ by `cursor-agent acp`, so work executes and bills through your Cursor account.
 cclaw                 # start the chat TUI
 cclaw raw             # Cursor's own TUI under a cclaw profile
 cclaw doctor          # diagnose dependencies, auth, sandbox and policy
-./install.sh --help   # installer options, including --uninstall
 ```
+
+Requires [Bun](https://bun.sh) and the Cursor CLI; the installer offers to set
+up either if missing. The Cursor desktop app is not needed.
 
 ## Commands
 
-| Command                                                             | What it does                                                                                 |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `cclaw` / `cclaw chat`                                              | the chat TUI (our UI, Cursor over ACP)                                                       |
-| `cclaw -p "<prompt>"`                                               | headless: one prompt, reply on stdout                                                        |
-| `cclaw raw [-- …]`                                                  | Cursor's own TUI under a cclaw profile. **The only mode with a live context-window figure.** |
-| `cclaw setup`                                                       | create the profile and seed its policy; safe to re-run                                       |
-| `cclaw doctor [--deep]`                                             | dependencies, ACP, auth, plan tier, sandbox support, hook sources                            |
-| `cclaw profile list\|create\|use\|show\|delete\|cred`               | profiles                                                                                     |
-| `cclaw model list [--all]\|config <spec>\|use <id>\|info`           | curate and switch models                                                                     |
-| `cclaw grant list\|add\|rm\|block\|prune`                           | tool consent                                                                                 |
-| `cclaw goal show\|set\|clear`                                       | a standing objective, injected as a Cursor rule                                              |
-| `cclaw loop [prompt] [--every 5m] [--max N] [--budget 2h] [--once]` | unattended iteration                                                                         |
+| Command                                                             | What it does                                                        |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `cclaw` / `cclaw chat`                                              | the chat TUI                                                        |
+| `cclaw -p "<prompt>"`                                               | headless: one prompt, reply on stdout                               |
+| `cclaw raw [-- …]`                                                  | Cursor's own TUI. The only mode showing a live context-window size. |
+| `cclaw setup`                                                       | create the profile and seed its policy; safe to re-run              |
+| `cclaw doctor [--deep]`                                             | dependencies, ACP, auth, plan tier, sandbox, hook sources           |
+| `cclaw profile list\|create\|use\|show\|delete\|cred`               | profiles                                                            |
+| `cclaw model list [--all]\|config <spec>\|use <id>\|info`           | curate and switch models                                            |
+| `cclaw grant list\|add\|rm\|block\|prune`                           | tool consent                                                        |
+| `cclaw goal show\|set\|clear`                                       | a standing objective, injected as a Cursor rule                     |
+| `cclaw loop [prompt] [--every 5m] [--max N] [--budget 2h] [--once]` | unattended iteration                                                |
 
 ## Slash commands
 
-Type `/` for the list; Tab completes names and arguments. Three sources are
-merged, and ours win a name collision so `/model` always stays the switcher:
+Type `/` for the list; Tab completes names and arguments. Three sources merge,
+and cclaw's own win a name collision:
 
-| Source   | Where it comes from                                                                                                        |
-| -------- | -------------------------------------------------------------------------------------------------------------------------- |
-| built in | cclaw itself: `/model` `/mode` `/compact` `/resume` `/thinking` `/goal` `/loop` `/usage` `/grant` `/clear` `/help` `/exit` |
-| your own | one markdown file per command in `<profile>/commands/`                                                                     |
-| Cursor's | whatever the session advertises, currently 39                                                                              |
+| Source   | Commands                                                                                                     |
+| -------- | ------------------------------------------------------------------------------------------------------------ |
+| built in | `/model` `/mode` `/compact` `/resume` `/thinking` `/goal` `/loop` `/usage` `/grant` `/clear` `/help` `/exit` |
+| yours    | one markdown file per command in `<profile>/commands/`                                                       |
+| Cursor's | its own commands, plus skills it finds in `.claude/skills/`, `.cursor/skills/` and your plugins              |
 
 A command of your own is a markdown file whose body is the prompt:
 
@@ -53,96 +52,18 @@ Review $ARGUMENTS and list only real defects.
 ```
 
 `$ARGUMENTS` takes everything after the command, `$1`…`$9` take single words,
-and a template with no placeholder gets the arguments appended. An unfilled
-placeholder takes its preceding space with it, so a bare `/review` reads as a
-sentence. Cursor's own commands are forwarded verbatim for Cursor to parse.
+and a template with no placeholder gets the arguments appended.
 
-## Watching the work
+## Using the TUI
 
-Tool calls render as they run: the command or file, then its output, with
-failures marked. `/thinking on` additionally streams the model's reasoning,
-which is off by default because it is long and usually noise. Reasoning streams
-either way; only rendering is optional.
+Tool calls render as they run — the command or file, then its output, with
+failures marked. Diffs are summarised as `path +added -removed`.
+`/thinking on` also streams the model's reasoning, off by default.
 
-Diffs are summarised as `path +added -removed` rather than rendered in full.
+**Type while a turn is running.** Messages queue and send in order when the
+turn ends; the footer shows how many are waiting.
 
-## Resuming
-
-Every turn is appended to `<profile>/sessions/<id>.jsonl`, so a conversation
-survives leaving the TUI. `/resume` lists what is saved and `/resume 2` reopens
-one.
-
-Resume does **not** depend on Cursor restoring its own session, because it will
-not. Cursor advertises `loadSession: true` and writes a session record under
-`CURSOR_CONFIG_DIR/acp-sessions/<id>/meta.json`, but that record holds only
-`{schemaVersion, cwd, title}` — no conversation — and `session/load` answers
-`Session "<id>" not found` for ids Cursor itself wrote. So cclaw tries the
-native path, and when it is refused falls back to replaying its own transcript
-into a fresh session as carried context. It says which happened. The transcript
-is ours on disk either way; the difference is whether the model remembers it or
-is reading it.
-
-## Headless runs
-
-`cclaw -p` runs one prompt without a TUI, for pipes, scripts and CI:
-
-```sh
-cclaw -p "what changed in src since the last tag?"
-cclaw -p fix the failing test          # quoting is optional
-git diff | cclaw -p "review this diff"  # a piped prompt works too
-cclaw -p --json "list the TODOs"       # machine-readable
-cclaw -p -r 1 "and now fix them"       # carry the last session's context
-```
-
-`text` output is the reply alone, so it pipes cleanly; everything else goes to
-stderr. `--json` adds the session id, `stopReason`, the tool calls made, and
-any permission requests that were refused.
-
-Exit codes are `0` on success, `2` for a usage error, and `1` when the agent
-errored, replied with nothing, or **was refused by the plan** — Cursor streams
-"Upgrade your plan to continue" as an ordinary reply with
-`stopReason: "end_turn"`, so without that check a scripted run would exit 0 on
-a non-answer.
-
-Nobody is present to answer a permission prompt, so consent is declined and
-reported rather than waited on, exactly as in `cclaw loop`. Allowlisted
-commands and grants added with `cclaw grant add` still run — the same policy
-and the same approval store as the TUI, not a second set of rules.
-
-Every headless turn is recorded to the session store, so a scripted run can be
-picked up afterwards with `/resume` in the TUI.
-
-## Context and compaction
-
-Context lives inside Cursor's ACP session: cclaw sends only your latest message
-and Cursor keeps the thread. So cclaw cannot trim the window, measure it, or
-inspect it — and because ACP reports no token usage, the footer says
-`ctx unknown`.
-
-`/compact` is the one lever that works within that. It asks the model to
-summarise the session **while it still has it**, starts a fresh session, and
-carries the summary into your next message rather than spending a turn on it.
-The footer shows `summary pending` until it goes out.
-
-```
-/compact                        # summarise everything
-/compact keep the migration     # weight the summary towards one thread
-/clear                          # the blunt instrument: total amnesia
-```
-
-**Compaction refuses rather than risks losing context.** A reply too short to be
-a summary leaves the session exactly as it was and shows you what came back.
-This is not defensive paranoia: a plan-gated turn streams
-`Upgrade your plan to continue` as ordinary assistant prose and then reports
-`stopReason: "end_turn"`, so neither the protocol nor the transcript marks it as
-a failure. Without the check, that sentence would replace your whole session.
-
-## While a turn is running
-
-Type anyway — messages are **queued** and sent in order when the turn ends,
-rather than being dropped. The footer shows how many are waiting.
-
-**Esc cancels**, escalating one step per press so each has a predictable effect:
+**Esc cancels**, escalating one step per press:
 
 | State                                  | Esc does                                       |
 | -------------------------------------- | ---------------------------------------------- |
@@ -151,18 +72,53 @@ rather than being dropped. The footer shows how many are waiting.
 | already stopping, or idle with a queue | discards the queued messages                   |
 | idle and empty                         | nothing                                        |
 
-Work queued behind a cancelled turn is discarded, not run: it was typed
-expecting the earlier turn to proceed.
+## Resuming
+
+Every turn is appended to `<profile>/sessions/<id>.jsonl`, so conversations
+survive leaving the TUI. `/resume` lists what is saved; `/resume 2` reopens one.
+
+Cursor will not reopen its own sessions, so cclaw replays its own transcript
+into a fresh session as context instead. It tells you which happened.
+
+## Compaction
+
+```
+/compact                        # summarise everything
+/compact keep the migration     # weight the summary towards one thread
+/clear                          # total amnesia
+```
+
+`/compact` asks the model to summarise the session, starts a fresh one, and
+carries the summary into your next message rather than spending a turn on it.
+The footer reads `summary pending` until it goes out.
+
+If the reply is too short to be a summary, compaction refuses, leaves the
+session untouched and shows you what came back.
+
+## Headless runs
+
+```sh
+cclaw -p "what changed in src since the last tag?"
+cclaw -p fix the failing test            # quoting optional
+git diff | cclaw -p "review this diff"   # piped prompt
+cclaw -p --json "list the TODOs"         # machine-readable
+cclaw -p -r 1 "and now fix them"         # carry a prior session's context
+```
+
+Text output is the reply alone, so it pipes cleanly; diagnostics go to stderr.
+`--json` adds the session id, `stopReason`, tool calls made, and any permission
+requests refused.
+
+Exit codes: `0` success, `2` usage error, `1` when the agent errored, replied
+with nothing, or was refused by your plan.
+
+Nobody is present to answer a permission prompt, so consent is declined and
+reported. Allowlisted commands and grants from `cclaw grant add` still run.
+Headless turns are recorded, so `/resume` picks them up later.
 
 ## Profiles
 
-A profile is isolation through two environment variables Cursor honours. The
-split is not what the names suggest, and is undocumented upstream:
-
-| Variable            | Holds                                                         |
-| ------------------- | ------------------------------------------------------------- |
-| `CURSOR_CONFIG_DIR` | `cli-config.json`, `permissions.json`, **`chats/`**, `rules/` |
-| `CURSOR_DATA_DIR`   | **`projects/`**                                               |
+A profile isolates Cursor's config and data directories:
 
 ```
 cclaw profile create work
@@ -170,24 +126,23 @@ cclaw --profile work chat
 ```
 
 **Credentials are the limit of that isolation.** On macOS the Cursor web login
-lives in a single global keychain slot (`cursor-access-token`) and its auth file
-path ignores `CURSOR_CONFIG_DIR`, so every profile using the shared login has the
-_same identity_. For a genuinely separate identity, give the profile its own key:
+is a single global keychain slot, so every profile using it shares one
+identity. For a separate identity, give the profile its own key:
 
 ```
 printf %s "$CURSOR_API_KEY" | cclaw profile cred set work
 ```
 
-`cclaw profile show` always states which of the two a profile is using.
+`cclaw profile show` states which of the two a profile uses.
 
 ## Policy and consent
 
 Defaults aim at Claude Code parity: a workspace-scoped sandbox, `allowlist`
-approvals that ask on a miss, a 16-entry allowlist where **nothing takes an
-arbitrary path**, and a 39-entry denylist covering credentials and system paths.
+approvals that ask on a miss, a 16-entry allowlist where nothing takes an
+arbitrary path, and a 39-entry denylist covering credentials and system paths.
 
 Sensitive commands (`aws`, `kubectl`, `terraform`, `gcloud`, …) always require
-consent, even if allowlisted. In the TUI:
+consent, even if allowlisted:
 
 ```
 Permission needed: `aws sts get-caller-identity` — 'aws' is a sensitive command
@@ -195,15 +150,12 @@ Permission needed: `aws sts get-caller-identity` — 'aws' is a sensitive comman
   2. Allow this session — every 'aws' until this session ends
   3. Allow always — every 'aws' in this directory, permanently
   4. Reject — refuse this command
-permission  1 Allow once   2 Allow this session   3 Allow always   4 Reject
 ```
 
-The four choices are ours, not Cursor's: cclaw renders the prompt and maps your
-choice onto whichever option Cursor advertised. **"Allow always" is permanent**
-— it records a profile grant and tells Cursor to remember it too. **"Allow this
+**"Allow always" is permanent** — it records a profile grant. **"Allow this
 session"** is cleared when the session ends.
 
-The same grants can be managed from the CLI:
+Grants can also be managed from the CLI:
 
 ```
 cclaw grant add aws                      # this directory, any arguments
@@ -218,67 +170,39 @@ Grants bind to the **exact command, arguments and directory**, so allowing
 `aws s3 ls` in one repo never authorises `aws s3 rm` or the same command
 elsewhere.
 
-## Known limitations
+## Limits
 
-These are properties of the Cursor CLI, established by testing against it, not
-things left unfinished.
+Properties of the Cursor CLI, established by testing against it.
 
-**1. No context-window figure in `cclaw chat`.** Not an ACP limitation, as
-earlier versions of this file claimed: the protocol defines a `usage_update`
-event carrying exactly `{used, size, cost}`. **This Cursor build never sends
-one.** It negotiates protocol v1 while the SDK is v2, which is the likely
-reason, and it advertises nothing for usage in `agentCapabilities`. cclaw does
-not yet read the event, since nothing has ever sent one. `context_window_size` is
-reachable only through Cursor's `statusLine`, which exists inside its own TUI,
-so `cclaw chat` shows `ctx unknown` and `cclaw raw` shows the real figure. Where a window size can be _derived_ (the
-model name encodes `1M`, or a `context=` parameter is set) `cclaw model info`
-reports it and labels it as derived. It is never invented.
-
-**2. File reads cannot be confined to the working directory.** Shell commands can
-be gated, prompted and denied. File reads cannot:
-
-- `sandbox.mode: enabled` with `readBoundary: workspace` does not confine them
-- a global `~/.cursor/sandbox.json` with `type: workspace_readwrite` does not either
-- `Read(/**)` as a deny _does_ confine them, but also blocks the workspace, since
-  workspace paths are absolute and deny beats allow — so no carve-out is expressible
-- **Cursor's own non-ACP path behaves identically**, so `cclaw raw` is no different
-
-The mitigation is an explicit denylist of the locations that matter (`/etc`,
-`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/Library/Keychains`, `**/.env`, `**/*.pem`, …).
-That is defence in depth, **not a boundary**: any path not listed is readable.
-
-**3. Our consent layer is UX, not a sandbox.** `bash -c '…'` and shell aliases
-can evade name matching. The policy refuses what it cannot parse — command
-substitution, backticks, `eval`, and a wrapper whose next token is an option
-(`nice -n5 kubectl`, where naming the flag would miss `kubectl`). Cursor's own
-sandbox and `permissions.deny` are the real boundary.
-
-**4. Free plans can only use `auto`.** Named models are rejected with
-`ActionRequiredError: Named models unavailable`. `cclaw model list` marks the
-rest `[plan]` rather than listing ~250 models you cannot run.
-
-**5. Unattended loops refuse all permissions.** Nobody is present to answer, so
-`cclaw loop` declines tool requests and reports what it would need. Every loop
-has a hard iteration count and a wall-clock budget.
+1. **No context-window figure in `cclaw chat`** — the footer reads
+   `ctx unknown`. `cclaw raw` shows the real figure. Where a size can be
+   derived from the model name, `cclaw model info` reports it and labels it
+   derived; it is never invented.
+2. **File reads cannot be confined to the working directory.** Shell commands
+   can be gated, prompted and denied; file reads cannot. The denylist covering
+   `/etc`, `~/.ssh`, `~/.aws`, `**/.env` and similar is defence in depth, not a
+   boundary — any path not listed is readable. `cclaw raw` is no different.
+3. **The consent layer is UX, not a sandbox.** `bash -c '…'` and shell aliases
+   can evade name matching. The policy refuses what it cannot parse. Cursor's
+   own sandbox and `permissions.deny` are the real boundary.
+4. **Free plans can only use `auto`.** `cclaw model list` marks the rest
+   `[plan]` rather than listing models you cannot run.
+5. **Unattended loops refuse all permissions** and report what they would need.
+   Every loop has a hard iteration count and a wall-clock budget.
 
 ## Checking without installing
 
 ```sh
-./install.sh --check
+./install.sh --check      # --dry-run is a synonym
 ```
 
-Runs every check the installer runs — Bun, the Cursor CLI, the hidden `acp`
-subcommand, the desktop app, `git`/`jq`, `PATH`, credentials and plan tier —
-and **changes nothing**. Anything it would otherwise offer to do is reported as
-`would offer: …` and declined. Exits `0` when cclaw could run and `1` when
-something is missing, so it works in CI.
+Runs every check the installer runs and changes nothing; anything it would
+otherwise offer is reported and declined. Exits `0` when cclaw could run and
+`1` when something is missing.
 
-Use it instead of `cclaw doctor` when nothing is installed yet: `doctor` is
-cclaw code, so it needs Bun and `node_modules` to run at all. Once installed,
-`cclaw doctor --deep` goes further — it inspects policy, sandbox support and
-all five hook sources.
-
-`--dry-run` is accepted as a synonym.
+Use it before anything is installed — `cclaw doctor` is cclaw code, so it needs
+Bun and `node_modules` to run at all. Once installed, `cclaw doctor --deep`
+goes further.
 
 ## Uninstalling
 
@@ -288,25 +212,14 @@ all five hook sources.
 ```
 
 `--uninstall` removes the `~/.local/bin/cclaw` link and nothing else, then
-prints what it left behind. Your profiles, grants, goals and session history
-survive, so reinstalling picks up where you were.
+prints what it left behind, so reinstalling picks up where you were.
 
 `--purge` additionally deletes `~/.cclaw` (honouring `CCLAW_HOME`) and the
-`cclaw` keychain entries holding per-profile API keys. It lists exactly what
-will go and asks first; `--yes` skips the confirmation for scripted runs.
-**This destroys data** — session transcripts, grants and goals are not
-recoverable.
+`cclaw` keychain entries. It lists what will go and asks first; `--yes` skips
+the confirmation. **This destroys data.**
 
-Two things it deliberately will not do:
-
-- **Remove a command link belonging to another checkout.** It only deletes
-  `~/.local/bin/cclaw` when that link points at _this_ directory, or when it
-  dangles because the checkout moved. Otherwise it says so and leaves it.
-- **Uninstall Bun or the Cursor CLI.** Those are installed by their own
-  vendors, not by this script, and other tools may depend on them.
-
-The checkout itself is never touched. Delete the directory by hand when you
-want it gone.
+It will not remove a command link belonging to another checkout, and it never
+uninstalls Bun or the Cursor CLI. The checkout itself is untouched.
 
 ## Development
 
@@ -316,16 +229,19 @@ bun run build     # compile a standalone binary to dist/cclaw
 ```
 
 `src/vendor/` is copied verbatim from upstream and excluded from formatting and
-linting, so refreshes stay clean diffs — see `scripts/vendor-openclaw.sh` and
-`PROVENANCE.md` for the exact commits. Ported files carry a header naming their
-upstream source; `src/tui/view/shims/` holds adapters where upstream's logic
-assumed OpenClaw concepts Cursor does not have.
+linting; see `scripts/vendor-openclaw.sh` and `PROVENANCE.md` for exact
+commits. Ported files carry a header naming their upstream source.
 
-Design notes live in `docs/`:
+| Document                     | What                                                         |
+| ---------------------------- | ------------------------------------------------------------ |
+| `docs/internals.md`          | layout, what is ours vs ported vs vendored, the seams        |
+| `docs/cursor-acp.md`         | what Cursor's ACP actually does, and what it only advertises |
+| `docs/policy-and-consent.md` | the exec policy and approval model, and its real boundaries  |
+| `docs/testing.md`            | the gate, test patterns and live-testing harnesses           |
+| `docs/architecture.html`     | how cclaw talks to Cursor — all five integration channels    |
+| `docs/subagents-design.md`   | implementation design for parallel subagents (not built)     |
 
-| Document                   | What it covers                                            |
-| -------------------------- | --------------------------------------------------------- |
-| `docs/architecture.html`   | how cclaw talks to Cursor — all five integration channels |
-| `docs/subagents-design.md` | implementation design for parallel subagents (not built)  |
-
-Licensing: cclaw is MIT. See `THIRD-PARTY-NOTICES.md`.
+Licensing: cclaw is MIT. The terminal UI is ported from
+[OpenClaw](https://github.com/openclaw/openclaw) (MIT) and driven over the
+[Agent Client Protocol](https://agentclientprotocol.com). See
+`THIRD-PARTY-NOTICES.md`.
