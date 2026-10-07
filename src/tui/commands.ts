@@ -54,6 +54,10 @@ export interface CommandContext {
   cursorCommands: () => { name: string; description: string }[];
   /** Slash commands defined by markdown files in the profile. */
   userCommands: () => UserCommand[];
+  /** A goal saved from a previous session, not in effect until resumed. */
+  savedGoal: () => string | null;
+  /** Take up the saved goal and start working it. */
+  resumeGoal: () => Promise<boolean>;
   /** Saved sessions, newest first. */
   listSessions: () => Promise<SessionSummary[]>;
   /** Re-open a saved session. */
@@ -206,6 +210,11 @@ function builtinCommands(ctx: CommandContext): SlashCommand[] {
         ];
         if (current !== null) {
           items.unshift({ value: current, label: current, description: "the current goal" });
+        } else {
+          const saved = ctx.savedGoal();
+          if (saved !== null) {
+            items.unshift({ value: "resume", label: "resume", description: `take up: ${saved}` });
+          }
         }
         const needle = prefix.trim().toLowerCase();
         return items.filter((i) => needle === "" || i.value.toLowerCase().includes(needle));
@@ -350,9 +359,26 @@ export async function runSlash(input: string, ctx: CommandContext): Promise<Comm
     case "goal": {
       if (arg === "") {
         const current = ctx.showGoal();
+        if (current !== null) {
+          ctx.say(`Goal: ${current}`);
+          return { handled: true };
+        }
+        const saved = ctx.savedGoal();
         ctx.say(
-          current === null ? "No goal set. Set one with /goal <objective>" : `Goal: ${current}`,
+          saved === null
+            ? "No goal set. Set one with /goal <objective>"
+            : `No goal in effect. Saved: ${saved}\n  /goal resume   take it up`,
         );
+        return { handled: true };
+      }
+      if (arg === "resume") {
+        if (ctx.showGoal() !== null) {
+          ctx.say("That goal is already in effect. /loop [n] works it again.");
+          return { handled: true };
+        }
+        if (!(await ctx.resumeGoal())) {
+          ctx.say("No saved goal to resume. Set one with /goal <objective>");
+        }
         return { handled: true };
       }
       if (arg === "clear" || arg === "none") {
@@ -368,13 +394,12 @@ export async function runSlash(input: string, ctx: CommandContext): Promise<Comm
         ctx.say("A loop is already running; it will pick up the new goal.");
         return { handled: true };
       }
-      if (ctx.busy()) {
-        ctx.say("A turn is running. Work the goal with /loop when it finishes.");
-        return { handled: true };
-      }
+      // No deferral when a turn is in flight: the loop waits for it rather
+      // than making the user come back and run /loop themselves.
       ctx.say(
         `Working toward it, up to ${GOAL_ITERATIONS} iterations. Esc stops. ` +
-          `/loop [n] runs it again.`,
+          `/loop [n] runs it again.` +
+          (ctx.busy() ? " Starting once the current turn finishes." : ""),
       );
       void ctx.runLoop(GOAL_ITERATIONS);
       return { handled: true };
@@ -536,6 +561,9 @@ export async function runSlash(input: string, ctx: CommandContext): Promise<Comm
         case "resumed":
           ctx.say(
             `Resumed ${describeSession(outcome.session)}` +
+              (outcome.session.goal !== undefined
+                ? `\nGoal restored: ${outcome.session.goal}`
+                : "") +
               (outcome.mode === "native"
                 ? ""
                 : "\n\nCursor would not reopen its own session, so the transcript is carried " +

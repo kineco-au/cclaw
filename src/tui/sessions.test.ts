@@ -273,3 +273,38 @@ describe("renderTranscript", () => {
     );
   });
 });
+
+describe("session goals", () => {
+  test("a header records the goal and summarise surfaces it", () => {
+    const parsed = parseSessionFile(
+      [
+        JSON.stringify({
+          v: 1,
+          id: "s1",
+          acpSessionId: "a",
+          cwd: "/repo",
+          startedAt: 1,
+          goal: "get the build green",
+        }),
+        JSON.stringify({ role: "user", text: "hi" }),
+      ].join("\n"),
+    );
+    expect(parsed).not.toBeNull();
+    const s = summarise(parsed!.header, parsed!.entries, 2);
+    expect(s.goal).toBe("get the build green");
+  });
+
+  test("a record written before goals existed resumes without one", () => {
+    const parsed = parseSessionFile(
+      JSON.stringify({ v: 1, id: "s1", acpSessionId: "a", cwd: "/repo", startedAt: 1 }),
+    );
+    expect(summarise(parsed!.header, parsed!.entries, 2).goal).toBeUndefined();
+  });
+
+  test("an empty goal is omitted rather than restored as blank", () => {
+    const parsed = parseSessionFile(
+      JSON.stringify({ v: 1, id: "s1", acpSessionId: "a", cwd: "/repo", startedAt: 1, goal: "" }),
+    );
+    expect(summarise(parsed!.header, parsed!.entries, 2).goal).toBeUndefined();
+  });
+});

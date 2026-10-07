@@ -84,22 +84,37 @@ into a fresh session as context instead. It tells you which happened.
 
 ```
 /goal get the test suite green    # set it and start working toward it
-/goal                             # show the current goal
-/goal clear                       # remove it
-/loop 5                           # work the existing goal again, 5 iterations
+/goal                             # show the goal, or offer a saved one
+/goal resume                      # take up the goal saved from last time
+/goal clear                       # forget it
+/loop 5                           # work the current goal again, 5 iterations
 ```
 
-`/goal <objective>` records the goal and immediately works on it, re-prompting
-until the agent reports the objective met or it reaches 20 iterations. **Esc
-stops the loop**, not just the turn in flight. The footer shows the goal and the
-iteration count.
+`/goal <objective>` records the goal and immediately starts working on it,
+re-prompting until the agent reports the objective met or it reaches 20
+iterations. Setting a goal mid-turn still starts the loop; it waits for the
+turn in flight rather than asking you to run `/loop` yourself. **Esc stops the
+loop**, not just the current turn.
 
 It stops early and says why — goal met, cancelled, the iteration limit, or your
 plan refusing the turn.
 
-The goal is also written into the profile's Cursor rules, so it applies to
-`cclaw raw` and to later sessions. `cclaw goal set` records one **without**
-starting work.
+**A new session never inherits a goal.** A goal left over from last time is
+offered, not applied:
+
+```
+saved goal: get the test suite green
+  /goal resume   take it up        /goal clear   forget it
+```
+
+Until you resume it the agent does not see it at all, because the Cursor rule
+that carries a goal into each turn is written only while one is being worked.
+`/resume <session>` restores the goal that session was working, along with its
+transcript.
+
+`cclaw goal set` records a goal from the CLI and arms it immediately, which is
+how `cclaw raw` picks one up. Opening the TUI stands it down again until you
+resume it.
 
 ## Compaction
 
@@ -172,6 +187,10 @@ Permission needed: `aws sts get-caller-identity` — 'aws' is a sensitive comman
   3. Allow always — every 'aws' in this directory, permanently
   4. Reject — refuse this command
 ```
+
+If the agent asks for several permissions at once they queue: you answer one
+at a time, the footer shows how many are behind it, and Esc denies all of them
+along with the turn.
 
 **"Allow always" is permanent** — it records a profile grant. **"Allow this
 session"** is cleared when the session ends.

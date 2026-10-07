@@ -16,7 +16,7 @@ import {
   TuiMainScreen,
 } from "@earendil-works/pi-tui";
 import { join } from "node:path";
-import { buildCommands, runSlash, type CommandContext } from "./commands.ts";
+import { buildCommands, GOAL_ITERATIONS, runSlash, type CommandContext } from "./commands.ts";
 import { isPlanGated } from "../plan-gate.ts";
 import { carriedMessage, compactPrompt, isPlausibleSummary, type CarriedKind } from "./compact.ts";
 import { loadUserCommands, type UserCommand } from "./user-commands.ts";
@@ -33,9 +33,15 @@ import {
 } from "./sessions.ts";
 import type { CommandEntry } from "@openclaw/gateway-protocol";
 import { renderToolEvent, StreamRouter } from "./stream-render.ts";
-import { clearGoal as clearGoalFiles, setGoal as setGoalFiles, type Goal } from "../goal.ts";
+import { PermissionQueue } from "./permission-queue.ts";
+import {
+  clearGoal as clearGoalFiles,
+  setGoal as setGoalFiles,
+  standDownGoal,
+  type Goal,
+} from "../goal.ts";
 import { cursorAbout, resolveCursorBinary } from "../cursor.ts";
-import { GOAL_MET_SENTINEL } from "../commands/loop.ts";
+import { describeStop, runGoalLoop } from "./goal-loop.ts";
 import { appendHistory, loadHistory, seedEditorHistory } from "./history.ts";
 import { TurnController } from "./turn-controller.ts";
 import { ChatLog } from "./view/components/chat-log.ts";
@@ -68,11 +74,6 @@ export interface AppOptions {
   mode?: ExecMode;
 }
 
-interface Pending {
-  ctx: AskContext;
-  resolve: (choice: AskChoiceKind | null) => void;
-}
-
 export async function runChatApp(opts: AppOptions): Promise<number> {
   const tui = new TuiMainScreen(new TuiProcessTerminal());
 
@@ -95,7 +96,7 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
     update: (runId, text) => chatLog.updateAssistant(text, runId),
     finalize: (runId, text) => chatLog.finalizeAssistant(text, runId),
   });
-  let pending: Pending | null = null;
+  const permissions = new PermissionQueue<AskContext, AskChoiceKind>();
   let busy = false;
   let model = "…";
   /** Context waiting to be prepended to the next message, and what it is. */
@@ -111,9 +112,14 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
   /** True while session/load replays history, so the replay is not re-rendered. */
   let replaying = false;
 
-  let goal: Goal | null = await readGoal(opts.profilePaths.goalFile);
+  /** Kept on disk but not in effect: /goal resume takes it up. */
+  const savedGoal: Goal | null = await readGoal(opts.profilePaths.goalFile);
+  let goal: Goal | null = null;
   const { allow, deny } = await readPolicyFromConfig(opts.profilePaths.cursorConfigDir);
   const rulesDir = join(opts.profilePaths.cursorConfigDir, "rules");
+  // The rule is what makes a goal act on a turn, so a session that has not
+  // adopted one must not leave it armed from last time.
+  if (savedGoal !== null) await standDownGoal(rulesDir);
   let turns = 0;
   let loopRunning = false;
   /** Set by Esc so a loop stops between iterations, not just mid-turn. */
@@ -124,11 +130,16 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
   const grantCounts = { permanent: 0, session: 0 };
 
   const setFooter = (): void => {
-    if (pending !== null) {
-      const choices = pending.ctx.choices
+    const head = permissions.head;
+    if (head !== undefined) {
+      const behind = permissions.size - 1;
+      const queued = behind > 0 ? ` ${tuiTheme.dim(`+${behind} waiting`)}` : "";
+      const choices = head.choices
         .map((c, i) => `${tuiTheme.accent(String(i + 1))} ${c.label}`)
         .join("   ");
-      footer.setText(`${tuiTheme.error("permission")}  ${choices}   ${tuiTheme.dim("esc denies")}`);
+      footer.setText(
+        `${tuiTheme.error("permission")}  ${choices}   ${tuiTheme.dim("esc denies")}${queued}`,
+      );
     } else {
       const state = loopRunning
         ? tuiTheme.accent("loop…")
@@ -151,6 +162,14 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
       );
     }
     tui.requestRender();
+  };
+
+  /** Show the prompt for one request. Called as each reaches the front. */
+  const announcePermission = (ctx: AskContext): void => {
+    chatLog.addSystem(
+      `Permission needed: ${ctx.toolTitle} — ${ctx.reason}\n` +
+        ctx.choices.map((c, i) => `  ${i + 1}. ${c.label} — ${c.hint}`).join("\n"),
+    );
   };
 
   /** Reassigned once commandContext exists; the backend callback needs it first. */
@@ -176,11 +195,10 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
     },
     askUser: (ctx) =>
       new Promise<AskChoiceKind | null>((resolve) => {
-        chatLog.addSystem(
-          `Permission needed: ${ctx.toolTitle} — ${ctx.reason}\n` +
-            ctx.choices.map((c, i) => `  ${i + 1}. ${c.label} — ${c.hint}`).join("\n"),
-        );
-        pending = { ctx, resolve };
+        const position = permissions.push(ctx, resolve);
+        // Only the head is being asked about; the rest are announced as they
+        // come to the front, so the log is not flooded mid-turn.
+        if (position === 1) announcePermission(ctx);
         setFooter();
       }),
   });
@@ -218,18 +236,18 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
 
   // Answer a pending permission prompt by number, or esc to deny.
   tui.addInputListener((data: string) => {
-    if (pending === null) return { data };
-    const p = pending;
+    const head = permissions.head;
+    if (head === undefined) return { data };
     if (data === "\x1b") {
-      void p; // the controller denies the prompt and stops its turn
+      // The controller denies every outstanding prompt and stops its turn.
       controller.cancel();
       return { consume: true };
     }
     const n = Number.parseInt(data.trim(), 10);
-    const choice = Number.isFinite(n) ? p.ctx.choices[n - 1] : undefined;
+    const choice = Number.isFinite(n) ? head.choices[n - 1] : undefined;
     if (choice === undefined) return { consume: true };
-    pending = null;
-    p.resolve(choice.kind);
+    const next = permissions.answerHead(choice.kind);
+    if (next !== undefined) announcePermission(next);
     setFooter();
     return { consume: true };
   });
@@ -279,6 +297,7 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
           acpSessionId: backend.acpSessionId(SESSION_KEY) ?? "",
           cwd: opts.cwd,
           startedAt: Date.now(),
+          ...(goal !== null ? { goal: goal.text } : {}),
         });
         recordStarted = true;
       }
@@ -320,11 +339,10 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
       });
     },
     denyPrompt: () => {
-      const p = pending;
-      pending = null;
-      p?.resolve(null);
+      const denied = permissions.denyAll();
+      if (denied > 1) say(`Denied ${denied} permission requests.`);
     },
-    promptPending: () => pending !== null,
+    promptPending: () => permissions.waiting,
     echo: (text) => chatLog.addUser(text),
     say,
     changed: () => {
@@ -356,6 +374,27 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
       return ok;
     },
     showGoal: () => goal?.text ?? null,
+    savedGoal: () => (goal === null ? (savedGoal?.text ?? null) : null),
+    resumeGoal: async () => {
+      if (savedGoal === null) return false;
+      goal = await setGoalFiles({
+        goalFile: opts.profilePaths.goalFile,
+        rulesDir,
+        text: savedGoal.text,
+      });
+      setFooter();
+      say(`Goal resumed: ${savedGoal.text}`);
+      if (loopRunning) {
+        say("A loop is already running; it will pick up the new goal.");
+        return true;
+      }
+      say(
+        `Working toward it, up to ${GOAL_ITERATIONS} iterations. Esc stops.` +
+          (controller.busy ? " Starting once the current turn finishes." : ""),
+      );
+      void commandContext.runLoop(GOAL_ITERATIONS);
+      return true;
+    },
     setGoal: async (text) => {
       goal = await setGoalFiles({ goalFile: opts.profilePaths.goalFile, rulesDir, text });
       setFooter();
@@ -440,6 +479,18 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
         sessionId = newSessionId();
         recordStarted = false;
       }
+      // Restore the goal this session was working, so resuming a conversation
+      // resumes what it was for. Older records carry no goal and stay goalless.
+      if (picked.goal !== undefined && picked.goal !== "") {
+        goal = await setGoalFiles({
+          goalFile: opts.profilePaths.goalFile,
+          rulesDir,
+          text: picked.goal,
+        });
+      } else if (goal !== null) {
+        await clearGoalFiles({ goalFile: opts.profilePaths.goalFile, rulesDir });
+        goal = null;
+      }
       setFooter();
       return { kind: "resumed", session: picked, mode };
     },
@@ -481,33 +532,21 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
       loopAbort = false;
       setFooter();
       try {
-        for (let i = 1; i <= iterations; i++) {
-          const objective = goal?.text;
-          if (objective === undefined) break;
-          say(`working the goal — ${i}/${iterations}`);
-          const reply = await send(
-            `${objective}\n\nThis is iteration ${i} of ${iterations}. When the objective is ` +
-              `fully met, reply with ${GOAL_MET_SENTINEL} on its own line.`,
-          );
-          if (reply.includes(GOAL_MET_SENTINEL)) {
-            say(`stopped: goal met after ${i} iteration(s)`);
-            return;
-          }
-          // Burning the whole budget on refusals teaches nothing and still bills.
-          if (isPlanGated(reply)) {
-            say("stopped: your plan refused the turn. /model or `cclaw model list`.");
-            return;
-          }
-          if (loopAbort) {
-            say(`stopped: cancelled after ${i} iteration(s)`);
-            return;
-          }
-        }
-        say(`stopped: reached the ${iterations}-iteration limit without meeting the goal`);
-      } catch (err) {
-        // `void runLoop(...)` cannot observe a rejection, so a loop that dies
-        // would otherwise just reset the footer and say nothing.
-        say(`stopped: ${err instanceof Error ? err.message : String(err)}`);
+        const stop = await runGoalLoop({
+          iterations,
+          goal: () => goal?.text ?? null,
+          send,
+          onIteration: (i, of) => say(`working the goal — ${i}/${of}`),
+          aborted: () => loopAbort,
+          // runLoop sends outside the TurnController, so without this a loop
+          // started mid-turn would put two prompts on one session at once.
+          waitUntilReady: async () => {
+            while (controller.busy && !loopAbort) {
+              await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+          },
+        });
+        say(describeStop(stop));
       } finally {
         loopRunning = false;
         loopAbort = false;
@@ -573,7 +612,13 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
         `${sessionModels.available.length} models available.`,
     );
     chatLog.addSystem("Type / for commands (Tab completes), @ for files. Ctrl+C to exit.");
-    if (goal !== null) chatLog.addSystem(`Goal: ${goal.text}`);
+    // A session never starts with a goal in effect; a saved one is offered.
+    if (savedGoal !== null) {
+      chatLog.addSystem(
+        `saved goal: ${savedGoal.text}\n` +
+          `  /goal resume   take it up        /goal clear   forget it`,
+      );
+    }
     setFooter();
   } catch (err) {
     chatLog.addSystem(`Failed to connect: ${err instanceof Error ? err.message : String(err)}`);

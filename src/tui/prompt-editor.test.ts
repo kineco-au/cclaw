@@ -32,6 +32,8 @@ function commandContext(): CommandContext {
     switchModel: async () => true,
     switchMode: async () => true,
     showGoal: () => null,
+    savedGoal: () => null,
+    resumeGoal: async () => false,
     setGoal: async () => {},
     clearGoal: async () => {},
     grant: async () => {},

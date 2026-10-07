@@ -25,6 +25,8 @@ export interface SessionHeader {
   acpSessionId: string;
   cwd: string;
   startedAt: number;
+  /** The goal being worked, so resuming restores it. Absent in older files. */
+  goal?: string;
 }
 
 export interface SessionSummary {
@@ -36,6 +38,8 @@ export interface SessionSummary {
   turns: number;
   /** The first thing the user typed, which is what makes a session findable. */
   firstPrompt?: string;
+  /** The goal this session was working, if any. */
+  goal?: string;
 }
 
 /** A session id that sorts chronologically and is safe as a filename. */
@@ -90,6 +94,7 @@ export function parseSessionFile(
       acpSessionId: h.acpSessionId,
       cwd: typeof h.cwd === "string" ? h.cwd : "",
       startedAt: typeof h.startedAt === "number" ? h.startedAt : 0,
+      ...(typeof h.goal === "string" && h.goal !== "" ? { goal: h.goal } : {}),
     };
   } catch {
     return null;
@@ -123,6 +128,7 @@ export function summarise(
     updatedAt,
     turns: entries.filter((e) => e.role === "user").length,
     ...(firstPrompt !== undefined ? { firstPrompt } : {}),
+    ...(header.goal !== undefined && header.goal !== "" ? { goal: header.goal } : {}),
   };
 }
 

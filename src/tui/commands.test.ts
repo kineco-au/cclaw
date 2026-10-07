@@ -49,6 +49,11 @@ function ctx(overrides: Partial<CommandContext> = {}): { c: CommandContext; said
       turns: 3,
       grants: { permanent: 1, session: 2 },
     }),
+    savedGoal: () => null,
+    resumeGoal: async () => {
+      said.push("<goal resumed>");
+      return true;
+    },
     loopRunning: () => false,
     runLoop: async () => {
       said.push("<loop started>");
@@ -236,6 +241,51 @@ describe("runSlash", () => {
     expect(said.at(-1)).toContain("cleared");
   });
 
+  test("/goal reports a saved goal rather than claiming none is set", async () => {
+    const { c, said } = ctx({ savedGoal: () => "get the build green" });
+    await runSlash("/goal", c);
+    expect(said[0]).toContain("No goal in effect");
+    expect(said[0]).toContain("get the build green");
+    expect(said[0]).toContain("/goal resume");
+  });
+
+  test("/goal resume takes up the saved goal", async () => {
+    const { c, said } = ctx({ savedGoal: () => "get the build green" });
+    await runSlash("/goal resume", c);
+    expect(said).toContain("<goal resumed>");
+  });
+
+  test("/goal resume says so when there is nothing saved", async () => {
+    const { c, said } = ctx({ resumeGoal: async () => false });
+    await runSlash("/goal resume", c);
+    expect(said.at(-1)).toContain("No saved goal");
+  });
+
+  test("/goal resume does not re-adopt a goal already in effect", async () => {
+    const { c, said } = ctx({ showGoal: () => "already working this" });
+    await runSlash("/goal resume", c);
+    expect(said).not.toContain("<goal resumed>");
+    expect(said[0]).toContain("already in effect");
+  });
+
+  test("/goal resume is not treated as a new goal named 'resume'", async () => {
+    // Otherwise the standing objective would literally become "resume".
+    const { c, said } = ctx({ savedGoal: () => "x" });
+    await runSlash("/goal resume", c);
+    expect(said.some((s) => s.includes("Goal set: resume"))).toBe(false);
+  });
+
+  test("/goal offers resume in its completions only when something is saved", async () => {
+    const withSaved = buildCommands(ctx({ savedGoal: () => "ship it" }).c);
+    const goalCmd = withSaved.find((c) => c.name === "goal");
+    const items = await goalCmd?.getArgumentCompletions?.("");
+    expect(items?.map((i) => i.value)).toContain("resume");
+
+    const without = buildCommands(ctx().c);
+    const bare = await without.find((c) => c.name === "goal")?.getArgumentCompletions?.("");
+    expect(bare?.map((i) => i.value)).not.toContain("resume");
+  });
+
   test("/goal starts working the goal, not just recording it", async () => {
     // Setting a goal and stopping was the bug: a goal is to be pursued.
     const { c, said } = ctx();
@@ -257,12 +307,14 @@ describe("runSlash", () => {
     expect(said).not.toContain("<loop started>");
   });
 
-  test("/goal records the goal but defers work while a turn is running", async () => {
+  test("/goal starts the loop even while a turn is running", async () => {
+    // Deferring and telling the user to run /loop themselves was the bug:
+    // setting a goal should begin work, waiting for the turn if need be.
     const { c, said } = ctx({ busy: () => true });
     await runSlash("/goal ship it", c);
     expect(said.some((s) => s.includes("Goal set: ship it"))).toBe(true);
-    expect(said).not.toContain("<loop started>");
-    expect(said.at(-1)).toContain("/loop");
+    expect(said).toContain("<loop started>");
+    expect(said.some((s) => s.includes("once the current turn finishes"))).toBe(true);
   });
 
   test("/goal does not start a second loop", async () => {
