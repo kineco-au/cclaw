@@ -15,6 +15,9 @@ export const BACKUP_KEEP = 10;
 export type SeedOutcome =
   | { status: "unchanged"; path: string }
   | { status: "written"; path: string; backup?: string }
+  /** Nothing was written and nothing is wrong; retry later. */
+  | { status: "deferred"; path: string; reason: string }
+  /** Nothing was written and the user has to act. */
   | { status: "refused"; path: string; reason: string };
 
 /**
@@ -22,7 +25,17 @@ export type SeedOutcome =
  * runs long-lived `worker-server` helpers which do NOT write cli-config.json;
  * matching those would block seeding indefinitely, so they are excluded.
  */
-const CONFIG_WRITER_RE = /(^|\/)(cursor-agent|agent)(\s|$)|index\.js\s+(acp|agent|tui)(\s|$)/;
+/**
+ * Cursor's CLI, and nothing else.
+ *
+ * A bare `agent` basename is not enough: Datadog, Buildkite, Azure DevOps and
+ * plenty of others ship a binary called `agent`, and matching those made
+ * `cclaw setup` report a Cursor agent that was not there. Either the line
+ * mentions Cursor's own install path, or it is an `agent`/`index.js` invoked
+ * with one of Cursor's subcommands.
+ */
+const CONFIG_WRITER_RE =
+  /cursor-agent|(^|\/)agent\s+(acp|agent|tui)(\s|$)|index\.js\s+(acp|agent|tui)(\s|$)/;
 const HELPER_RE = /worker-server|worker\b/;
 
 /** Decide from a full command line whether this process may write our config. */
@@ -40,7 +53,7 @@ export function isConfigWriterLine(line: string, selfPid?: number): boolean {
  * Uses `ps` rather than `pgrep -a`: macOS pgrep has no -a flag, so it returns
  * bare PIDs and any command-line matching silently never fires.
  */
-export async function agentRunning(): Promise<boolean> {
+export async function runningConfigWriter(): Promise<string | null> {
   try {
     const proc = Bun.spawn(["ps", "-Ao", "pid=,command="], {
       stdout: "pipe",
@@ -48,11 +61,20 @@ export async function agentRunning(): Promise<boolean> {
     });
     const out = await new Response(proc.stdout).text();
     await proc.exited;
-    return out.split("\n").some((line) => isConfigWriterLine(line, process.pid));
+    return (
+      out
+        .split("\n")
+        .find((line) => isConfigWriterLine(line, process.pid))
+        ?.trim() ?? null
+    );
   } catch {
     // ps unavailable: do not block the user on a diagnostic we cannot run.
-    return false;
+    return null;
   }
+}
+
+export async function agentRunning(): Promise<boolean> {
+  return (await runningConfigWriter()) !== null;
 }
 
 async function readJsonObject(path: string): Promise<JsonObject | "missing" | "invalid"> {
@@ -119,18 +141,12 @@ export interface SeedRequest {
   backupsDir: string;
   /** Skip the running-agent guard. Only for tests. */
   skipAgentCheck?: boolean;
+  /** Override the running-agent lookup. Only for tests. */
+  findConfigWriter?: () => Promise<string | null>;
 }
 
 export async function seedPolicyFile(req: SeedRequest): Promise<SeedOutcome> {
   const { path, enforce } = req;
-
-  if (req.skipAgentCheck !== true && (await agentRunning())) {
-    return {
-      status: "refused",
-      path,
-      reason: "a Cursor agent is running; quit it and retry (we would race its own writes)",
-    };
-  }
 
   const existing = await readJsonObject(path);
   if (existing === "invalid") {
@@ -151,6 +167,23 @@ export async function seedPolicyFile(req: SeedRequest): Promise<SeedOutcome> {
   if (existing !== "missing") {
     const before = `${JSON.stringify(sortKeys(existing), null, 2)}\n`;
     if (before === text) return { status: "unchanged", path };
+  }
+
+  // Only now does a running agent matter: we would be racing its own writes.
+  // An already-seeded profile never reaches here, which is why re-running
+  // setup with cclaw open is no longer reported as a failure.
+  if (req.skipAgentCheck !== true) {
+    const writer = (req.findConfigWriter ?? runningConfigWriter)();
+    const found = await writer;
+    if (found !== null) {
+      return {
+        status: "deferred",
+        path,
+        reason:
+          `policy left as it is: a Cursor agent is running and we would race its ` +
+          `writes. Retry once it exits.\n       detected: ${found.slice(0, 100)}`,
+      };
+    }
   }
 
   const madeBackup = await backup(path, req.backupsDir);

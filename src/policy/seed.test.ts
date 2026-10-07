@@ -4,6 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isConfigWriterLine, seedPolicyFile } from "./seed.ts";
 
+const enforce = { version: 1, approvalMode: "allowlist" };
+
+async function tmp(): Promise<{ dir: string; path: string; backups: string }> {
+  const dir = await mkdtemp(join(tmpdir(), "cclaw-seed-"));
+  return { dir, path: join(dir, "cli-config.json"), backups: join(dir, "backups") };
+}
+
 /**
  * Real `ps -Ao pid=,command=` lines observed on macOS while driving Cursor.
  * This guard silently never fired once because macOS pgrep lacks -a and
@@ -17,6 +24,22 @@ describe("isConfigWriterLine", () => {
       ),
     ).toBe(true);
     expect(isConfigWriterLine("123 /Users/adam/.local/bin/cursor-agent")).toBe(true);
+    expect(isConfigWriterLine("124 /Users/x/.local/bin/agent acp")).toBe(true);
+  });
+
+  test("ignores unrelated binaries called 'agent'", () => {
+    // These made setup report a running Cursor agent on machines that had
+    // none, which failed the install.
+    for (const line of [
+      "501 /opt/datadog-agent/bin/agent/agent run",
+      "502 /usr/local/bin/agent --config /etc/foo.yml",
+      "503 /opt/buildkite-agent/bin/agent start",
+      "504 /Applications/Xcode.app/Contents/Developer/usr/bin/agent",
+      "505 /usr/bin/ssh-agent -l",
+      "506 /opt/azure/agent listen",
+    ]) {
+      expect(isConfigWriterLine(line)).toBe(false);
+    }
   });
 
   test("ignores Cursor's long-lived worker helpers, which do not write the config", () => {
@@ -45,13 +68,6 @@ describe("isConfigWriterLine", () => {
 });
 
 describe("seedPolicyFile", () => {
-  const enforce = { version: 1, approvalMode: "allowlist" };
-
-  async function tmp(): Promise<{ dir: string; path: string; backups: string }> {
-    const dir = await mkdtemp(join(tmpdir(), "cclaw-seed-"));
-    return { dir, path: join(dir, "cli-config.json"), backups: join(dir, "backups") };
-  }
-
   test("creates the file when absent", async () => {
     const t = await tmp();
     const r = await seedPolicyFile({ ...t, enforce, backupsDir: t.backups, skipAgentCheck: true });
@@ -102,5 +118,59 @@ describe("seedPolicyFile", () => {
     await writeFile(t.path, "[1,2,3]");
     const r = await seedPolicyFile({ ...t, enforce, backupsDir: t.backups, skipAgentCheck: true });
     expect(r.status).toBe("refused");
+  });
+});
+
+describe("seedPolicyFile with an agent running", () => {
+  const busy = async (): Promise<string | null> => "999 /Users/x/.local/bin/cursor-agent acp";
+
+  test("an already-seeded profile reports unchanged, not a problem", async () => {
+    // The reported bug: re-running setup on an existing profile failed the
+    // install even though there was nothing to write.
+    const t = await tmp();
+    await seedPolicyFile({ ...t, enforce, backupsDir: t.backups, skipAgentCheck: true });
+    const r = await seedPolicyFile({
+      ...t,
+      enforce,
+      backupsDir: t.backups,
+      findConfigWriter: busy,
+    });
+    expect(r.status).toBe("unchanged");
+  });
+
+  test("a needed write defers rather than refusing, and leaves the file alone", async () => {
+    const t = await tmp();
+    await writeFile(t.path, JSON.stringify({ approvalMode: "full" }));
+    const r = await seedPolicyFile({
+      ...t,
+      enforce,
+      backupsDir: t.backups,
+      findConfigWriter: busy,
+    });
+    expect(r.status).toBe("deferred");
+    expect(JSON.parse(await readFile(t.path, "utf8"))).toEqual({ approvalMode: "full" });
+  });
+
+  test("the deferral names the process it detected", async () => {
+    const t = await tmp();
+    await writeFile(t.path, JSON.stringify({ approvalMode: "full" }));
+    const r = await seedPolicyFile({
+      ...t,
+      enforce,
+      backupsDir: t.backups,
+      findConfigWriter: busy,
+    });
+    expect(r.status === "deferred" && r.reason).toContain("cursor-agent");
+  });
+
+  test("writes normally when no agent is found", async () => {
+    const t = await tmp();
+    const r = await seedPolicyFile({
+      ...t,
+      enforce,
+      backupsDir: t.backups,
+      findConfigWriter: async () => null,
+    });
+    expect(r.status).toBe("written");
   });
 });

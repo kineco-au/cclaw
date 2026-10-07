@@ -54,8 +54,13 @@ export async function setupCommand(profileArg?: string): Promise<number> {
       case "unchanged":
         process.stdout.write(`${s.dim(`${seed.label} already up to date`)}\n`);
         break;
-      case "refused":
+      case "deferred":
+        // Nothing is broken and nothing is missing, so this must not fail the
+        // install: re-running later picks it up.
         process.stdout.write(`${s.yellow("warn")} ${seed.label}: ${outcome.reason}\n`);
+        break;
+      case "refused":
+        process.stdout.write(`${s.red("fail")} ${seed.label}: ${outcome.reason}\n`);
         failed = true;
         break;
     }

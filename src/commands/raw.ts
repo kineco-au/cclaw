@@ -86,7 +86,7 @@ export async function raw(opts: RawOptions = {}): Promise<number> {
 
   for (const seed of seeds) {
     const outcome = await seedPolicyFile(seed);
-    if (outcome.status === "refused") {
+    if (outcome.status === "refused" || outcome.status === "deferred") {
       process.stderr.write(`${s.yellow("policy not applied")}: ${outcome.reason}\n`);
     }
   }
