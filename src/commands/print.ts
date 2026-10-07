@@ -14,6 +14,7 @@
 
 import { AcpTuiBackend, type ToolEvent, type TranscriptEntry } from "../tui/acp-backend.ts";
 import { carriedMessage } from "../tui/compact.ts";
+import { isPlanGated } from "../plan-gate.ts";
 import {
   appendTurn,
   listSessions,
@@ -84,18 +85,6 @@ export function parsePrintArgs(args: readonly string[]): PrintArgs {
   const prompt = words.join(" ").trim();
   if (prompt !== "" && prompt !== "-") opts.prompt = prompt;
   return { opts };
-}
-
-/**
- * Cursor streams a plan refusal as an ordinary reply and still reports
- * `stopReason: "end_turn"`, so neither the protocol nor the transcript marks it
- * as a failure — the same trap that made `/compact` discard a live session.
- * Headless runs feed CI and scripts, where exiting 0 on a non-answer is worse
- * than failing, so the one known gate string is matched explicitly rather than
- * inferred from reply length.
- */
-export function isPlanGated(reply: string): boolean {
-  return /upgrade your plan/i.test(reply);
 }
 
 export interface PrintResult {

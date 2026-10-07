@@ -6,11 +6,16 @@
 # duplicates, which is what makes `cclaw setup` and this script the same path.
 set -uo pipefail
 
-# The guard must parse under bash 3.2 (Apple's /bin/bash) so an old shell gets a
-# message instead of a syntax error.
-if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
-  printf 'cclaw requires bash 4+ to install (found %s).\n' "${BASH_VERSION:-unknown}" >&2
-  printf 'Try:  /opt/homebrew/bin/bash install.sh   or   brew install bash\n' >&2
+# 3.2 is what Apple still ships as /bin/bash, and every path in this script
+# works on it. The guard itself must parse under an old shell, so it avoids
+# anything newer than bash 2 syntax: a bad shell must get this message rather
+# than a syntax error.
+BASH_MAJOR=${BASH_VERSINFO[0]:-0}
+BASH_MINOR=${BASH_VERSINFO[1]:-0}
+if [[ $BASH_MAJOR -lt 3 ]] || { [[ $BASH_MAJOR -eq 3 ]] && [[ $BASH_MINOR -lt 2 ]]; }; then
+  printf 'cclaw requires bash 3.2 or newer to install (found %s).\n' \
+    "${BASH_VERSION:-a shell that is not bash}" >&2
+  printf 'Try:  bash install.sh\n' >&2
   exit 1
 fi
 
@@ -279,6 +284,10 @@ if ((DO_UNINSTALL)); then
   say ""
   exit 0
 fi
+
+# --- 0. The shell running this installer and bin/cclaw ----------------------
+step "checking the shell"
+ok "bash ${BASH_VERSION%%(*} ${DIM}(3.2 or newer)${RESET}"
 
 # --- 1. Bun, which runs cclaw itself ----------------------------------------
 step "checking Bun"

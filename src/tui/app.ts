@@ -17,6 +17,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { join } from "node:path";
 import { buildCommands, runSlash, type CommandContext } from "./commands.ts";
+import { isPlanGated } from "../plan-gate.ts";
 import { carriedMessage, compactPrompt, isPlausibleSummary, type CarriedKind } from "./compact.ts";
 import { loadUserCommands, type UserCommand } from "./user-commands.ts";
 import {
@@ -115,6 +116,8 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
   const rulesDir = join(opts.profilePaths.cursorConfigDir, "rules");
   let turns = 0;
   let loopRunning = false;
+  /** Set by Esc so a loop stops between iterations, not just mid-turn. */
+  let loopAbort = false;
   let plan: string | undefined;
   /** Set once the controller exists; setFooter is defined before it. */
   let turns_controller: TurnController | undefined;
@@ -247,6 +250,9 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
   };
 
   editor.onEscape = () => {
+    // Cancelling the turn alone would let the loop start the next iteration,
+    // leaving no way to stop a goal that is not converging.
+    if (loopRunning) loopAbort = true;
     controller.cancel();
   };
 
@@ -472,24 +478,39 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
     loopRunning: () => loopRunning,
     runLoop: async (iterations) => {
       loopRunning = true;
+      loopAbort = false;
       setFooter();
       try {
         for (let i = 1; i <= iterations; i++) {
           const objective = goal?.text;
           if (objective === undefined) break;
-          say(`loop ${i}/${iterations}`);
+          say(`working the goal — ${i}/${iterations}`);
           const reply = await send(
             `${objective}\n\nThis is iteration ${i} of ${iterations}. When the objective is ` +
               `fully met, reply with ${GOAL_MET_SENTINEL} on its own line.`,
           );
           if (reply.includes(GOAL_MET_SENTINEL)) {
-            say(`loop stopped: goal met after ${i} iteration(s)`);
+            say(`stopped: goal met after ${i} iteration(s)`);
+            return;
+          }
+          // Burning the whole budget on refusals teaches nothing and still bills.
+          if (isPlanGated(reply)) {
+            say("stopped: your plan refused the turn. /model or `cclaw model list`.");
+            return;
+          }
+          if (loopAbort) {
+            say(`stopped: cancelled after ${i} iteration(s)`);
             return;
           }
         }
-        say(`loop stopped: reached ${iterations} iteration(s)`);
+        say(`stopped: reached the ${iterations}-iteration limit without meeting the goal`);
+      } catch (err) {
+        // `void runLoop(...)` cannot observe a rejection, so a loop that dies
+        // would otherwise just reset the footer and say nothing.
+        say(`stopped: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
         loopRunning = false;
+        loopAbort = false;
         setFooter();
       }
     },

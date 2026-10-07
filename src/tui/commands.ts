@@ -71,6 +71,14 @@ export type ResumeOutcome =
   | { kind: "not-found"; selector: string }
   | { kind: "failed"; reason: string };
 
+/**
+ * Iterations `/goal` works for before giving up.
+ *
+ * Bounded deliberately: an unbounded loop on a goal the agent cannot meet
+ * spends real money. `cclaw loop` applies a wall-clock budget as well.
+ */
+export const GOAL_ITERATIONS = 20;
+
 export type CompactOutcome =
   /** The session was replaced; the summary is carried into the next message. */
   | { kind: "compacted"; turns: number; summary: string }
@@ -189,7 +197,7 @@ function builtinCommands(ctx: CommandContext): SlashCommand[] {
     },
     {
       name: "goal",
-      description: "show, set or clear the standing goal",
+      description: "set a goal and work toward it, or show/clear it",
       argumentHint: "[objective|clear]",
       getArgumentCompletions: (prefix: string): AutocompleteItem[] => {
         const current = ctx.showGoal();
@@ -354,6 +362,21 @@ export async function runSlash(input: string, ctx: CommandContext): Promise<Comm
       }
       await ctx.setGoal(arg);
       ctx.say(`Goal set: ${arg}`);
+      // A goal is something to pursue, not just to record. Setting one starts
+      // work on it; `cclaw goal set` is the route that only records it.
+      if (ctx.loopRunning()) {
+        ctx.say("A loop is already running; it will pick up the new goal.");
+        return { handled: true };
+      }
+      if (ctx.busy()) {
+        ctx.say("A turn is running. Work the goal with /loop when it finishes.");
+        return { handled: true };
+      }
+      ctx.say(
+        `Working toward it, up to ${GOAL_ITERATIONS} iterations. Esc stops. ` +
+          `/loop [n] runs it again.`,
+      );
+      void ctx.runLoop(GOAL_ITERATIONS);
       return { handled: true };
     }
 

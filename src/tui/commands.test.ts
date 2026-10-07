@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildCommands,
   describeSession,
+  GOAL_ITERATIONS,
   parseSlash,
   runSlash,
   shortModelLabel,
@@ -227,11 +228,49 @@ describe("runSlash", () => {
   test("/goal sets, shows and clears", async () => {
     const { c, said } = ctx();
     await runSlash("/goal ship it", c);
-    expect(said.at(-1)).toContain("Goal set: ship it");
+    expect(said.some((s) => s.includes("Goal set: ship it"))).toBe(true);
+    said.length = 0;
     await runSlash("/goal", c);
     expect(said.at(-1)).toContain("Goal: ship it");
     await runSlash("/goal clear", c);
     expect(said.at(-1)).toContain("cleared");
+  });
+
+  test("/goal starts working the goal, not just recording it", async () => {
+    // Setting a goal and stopping was the bug: a goal is to be pursued.
+    const { c, said } = ctx();
+    await runSlash("/goal get the build green", c);
+    expect(said.at(-1)).toBe("<loop started>");
+    expect(said.some((s) => s.includes(`${GOAL_ITERATIONS} iterations`))).toBe(true);
+    expect(said.some((s) => s.includes("Esc stops"))).toBe(true);
+  });
+
+  test("/goal with no argument shows without starting work", async () => {
+    const { c, said } = ctx();
+    await runSlash("/goal", c);
+    expect(said).not.toContain("<loop started>");
+  });
+
+  test("/goal clear does not start work", async () => {
+    const { c, said } = ctx();
+    await runSlash("/goal clear", c);
+    expect(said).not.toContain("<loop started>");
+  });
+
+  test("/goal records the goal but defers work while a turn is running", async () => {
+    const { c, said } = ctx({ busy: () => true });
+    await runSlash("/goal ship it", c);
+    expect(said.some((s) => s.includes("Goal set: ship it"))).toBe(true);
+    expect(said).not.toContain("<loop started>");
+    expect(said.at(-1)).toContain("/loop");
+  });
+
+  test("/goal does not start a second loop", async () => {
+    const { c, said } = ctx({ loopRunning: () => true });
+    await runSlash("/goal ship it", c);
+    expect(said.some((s) => s.includes("Goal set: ship it"))).toBe(true);
+    expect(said).not.toContain("<loop started>");
+    expect(said.at(-1)).toContain("already running");
   });
 
   test("/usage reports what we know and is honest about tokens", async () => {

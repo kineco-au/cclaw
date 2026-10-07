@@ -66,6 +66,8 @@ export class AcpClient {
   private proc?: Bun.Subprocess<"pipe", "pipe", "pipe">;
   private conn?: ClientSideConnection;
   private initResult?: InitializeResponse;
+  /** The in-flight handshake, so concurrent callers await one start. */
+  private startPromise?: Promise<InitializeResponse>;
   private stderrBuf = "";
   private closed = false;
 
@@ -79,13 +81,26 @@ export class AcpClient {
     return this.proc !== undefined && !this.closed;
   }
 
-  /** Spawn the agent and complete the ACP handshake. */
+  /**
+   * Spawn the agent and complete the ACP handshake.
+   *
+   * Safe to call concurrently: `conn` is assigned before `initialize` resolves,
+   * so a second caller landing in that window used to see a connection with no
+   * init result and throw. Callers now share one in-flight handshake.
+   */
   async start(): Promise<InitializeResponse> {
-    if (this.conn !== undefined) {
-      if (this.initResult === undefined) throw new Error("ACP client started but not initialized");
-      return this.initResult;
+    if (this.initResult !== undefined) return this.initResult;
+    if (this.startPromise === undefined) {
+      this.startPromise = this.handshake().catch((err: unknown) => {
+        // Let a later call retry rather than caching the failure forever.
+        this.startPromise = undefined;
+        throw err;
+      });
     }
+    return await this.startPromise;
+  }
 
+  private async handshake(): Promise<InitializeResponse> {
     const bin = this.opts.binary ?? (await resolveCursorBinary())?.path;
     if (bin === undefined) throw new Error("Cursor CLI not found; cannot start ACP");
 
@@ -309,6 +324,12 @@ export class AcpClient {
       // already gone
     }
     await this.proc?.exited;
+    // Drop the handshake so a later start() respawns instead of handing back
+    // the result of a connection that is now dead.
+    this.conn = undefined;
+    this.initResult = undefined;
+    this.startPromise = undefined;
+    this.proc = undefined;
   }
 }
 

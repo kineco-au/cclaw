@@ -9,6 +9,7 @@ import { createStyler } from "./ui/style.ts";
 const USAGE = `cclaw - a Claude-Code-shaped terminal agent running on the Cursor CLI
 
 USAGE
+  cclaw                               start the chat TUI
   cclaw <command> [args...]
   cclaw -p "<prompt>" [options]       run one prompt headlessly and print the reply
 
@@ -39,6 +40,7 @@ OPTIONS
   -P, --profile <name>               use this profile for this run
       --no-banner                    suppress the banner
       --dry-run                      print the command and env, then exit
+  -h, --help                         this message
 
 ENVIRONMENT
   CCLAW_HOME                         state root (default ~/.cclaw)
@@ -54,6 +56,7 @@ interface Parsed {
   deep: boolean;
   dryRun: boolean;
   print: boolean;
+  help: boolean;
 }
 
 export function parseArgv(argv: string[]): Parsed {
@@ -64,6 +67,7 @@ export function parseArgv(argv: string[]): Parsed {
     deep: false,
     dryRun: false,
     print: false,
+    help: false,
   };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -83,6 +87,10 @@ export function parseArgv(argv: string[]): Parsed {
     }
     if (a === "--dry-run") {
       out.dryRun = true;
+      continue;
+    }
+    if (a === "-h" || a === "--help") {
+      out.help = true;
       continue;
     }
     if (a === "-p" || a === "--print") {
@@ -111,13 +119,18 @@ async function main(): Promise<number> {
   const parsed = parseArgv(process.argv.slice(2));
   const s = createStyler();
 
+  if (parsed.help) {
+    printBanner({ suppress: parsed.noBanner, subtitle: `v${CCLAW_VERSION}` });
+    process.stdout.write(USAGE);
+    return 0;
+  }
+
   if (parsed.print) {
     const { printCommand } = await import("./commands/print.ts");
     return await printCommand(parsed.args, parsed.profile);
   }
 
   switch (parsed.command) {
-    case "":
     case "help":
       printBanner({ suppress: parsed.noBanner, subtitle: `v${CCLAW_VERSION}` });
       process.stdout.write(USAGE);
@@ -131,6 +144,7 @@ async function main(): Promise<number> {
       printBanner({ suppress: parsed.noBanner, subtitle: "diagnostics" });
       return await doctor({ deep: parsed.deep, profile: parsed.profile });
 
+    case "":
     case "chat": {
       const { runChatApp } = await import("./tui/app.ts");
       const { resolvePaths } = await import("./env.ts");

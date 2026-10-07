@@ -3,8 +3,32 @@ import { parseArgv } from "./cli.ts";
 import { isValidProfileName, profilePaths, resolvePaths } from "./env.ts";
 
 describe("parseArgv", () => {
-  test("no arguments yields the help command", () => {
-    expect(parseArgv([])).toMatchObject({ command: "", noBanner: false });
+  test("no arguments yields the empty command, which dispatches to chat", () => {
+    expect(parseArgv([])).toMatchObject({ command: "", noBanner: false, help: false });
+  });
+
+  test("reads -h and its long form", () => {
+    expect(parseArgv(["-h"]).help).toBe(true);
+    expect(parseArgv(["--help"]).help).toBe(true);
+    expect(parseArgv([]).help).toBe(false);
+  });
+
+  test("--help is a flag, not a prompt, even after -p", () => {
+    // Otherwise `cclaw -p --help` would send "--help" to the agent, or print
+    // mode would reject it as an unknown option.
+    const parsed = parseArgv(["-p", "--help"]);
+    expect(parsed.help).toBe(true);
+    expect(parsed.args).toEqual([]);
+  });
+
+  test("--help does not become the command, so a bare run can start chat", () => {
+    // `case ""` dispatches to chat now, so --help must be caught as a flag or
+    // asking for help would launch the TUI instead.
+    expect(parseArgv(["--help"]).command).toBe("");
+  });
+
+  test("`help` as a word still works", () => {
+    expect(parseArgv(["help"]).command).toBe("help");
   });
 
   test("reads a command", () => {

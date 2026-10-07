@@ -26,7 +26,7 @@ up either if missing. The Cursor desktop app is not needed.
 | `cclaw profile list\|create\|use\|show\|delete\|cred`               | profiles                                                            |
 | `cclaw model list [--all]\|config <spec>\|use <id>\|info`           | curate and switch models                                            |
 | `cclaw grant list\|add\|rm\|block\|prune`                           | tool consent                                                        |
-| `cclaw goal show\|set\|clear`                                       | a standing objective, injected as a Cursor rule                     |
+| `cclaw goal show\|set\|clear`                                       | record a standing objective, injected as a Cursor rule              |
 | `cclaw loop [prompt] [--every 5m] [--max N] [--budget 2h] [--once]` | unattended iteration                                                |
 
 ## Slash commands
@@ -79,6 +79,27 @@ survive leaving the TUI. `/resume` lists what is saved; `/resume 2` reopens one.
 
 Cursor will not reopen its own sessions, so cclaw replays its own transcript
 into a fresh session as context instead. It tells you which happened.
+
+## Goals
+
+```
+/goal get the test suite green    # set it and start working toward it
+/goal                             # show the current goal
+/goal clear                       # remove it
+/loop 5                           # work the existing goal again, 5 iterations
+```
+
+`/goal <objective>` records the goal and immediately works on it, re-prompting
+until the agent reports the objective met or it reaches 20 iterations. **Esc
+stops the loop**, not just the turn in flight. The footer shows the goal and the
+iteration count.
+
+It stops early and says why — goal met, cancelled, the iteration limit, or your
+plan refusing the turn.
+
+The goal is also written into the profile's Cursor rules, so it applies to
+`cclaw raw` and to later sessions. `cclaw goal set` records one **without**
+starting work.
 
 ## Compaction
 
