@@ -15,8 +15,59 @@ if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
 fi
 
 ROOT=$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+CCLAW_HOME=${CCLAW_HOME:-$HOME/.cclaw}
+LINK=$HOME/.local/bin/cclaw
+KEYCHAIN_SERVICE=cclaw
+
 ASSUME_YES=0
-[[ ${1:-} == "--yes" || ${1:-} == "-y" ]] && ASSUME_YES=1
+DO_UNINSTALL=0
+DO_PURGE=0
+
+usage() {
+  cat << 'EOF'
+cclaw installer
+
+USAGE
+  ./install.sh [--yes]              install or repair
+  ./install.sh --uninstall [--purge]
+  ./install.sh --help
+
+OPTIONS
+  -y, --yes        answer every prompt with yes (for scripted runs)
+      --uninstall  remove the cclaw command link
+      --purge      with --uninstall, also remove profiles, grants, session
+                   history and the cclaw keychain entries. Destroys data.
+  -h, --help       this message
+
+Installing never removes anything, and re-running repairs rather than
+duplicates. Uninstalling leaves Bun and the Cursor CLI alone: they are
+installed by their own vendors, not by this script.
+EOF
+}
+
+while (($# > 0)); do
+  case $1 in
+    -y | --yes) ASSUME_YES=1 ;;
+    --uninstall) DO_UNINSTALL=1 ;;
+    --purge) DO_PURGE=1 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'unknown option: %s\n\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if ((DO_PURGE && !DO_UNINSTALL)); then
+  printf '%s\n\n' '--purge only applies with --uninstall' >&2
+  usage >&2
+  exit 2
+fi
 
 if [[ -t 1 && -z ${NO_COLOR:-} ]]; then
   PINK=$'\033[38;2;230;2;120m'
@@ -75,9 +126,141 @@ install_hint() {
   esac
 }
 
+# --- uninstall ---------------------------------------------------------------
+
+# Profile names, for the keychain entries each one may own.
+profile_names() {
+  local dir=$CCLAW_HOME/profiles d
+  [[ -d $dir ]] || return 0
+  for d in "$dir"/*/; do
+    [[ -d $d ]] || continue
+    basename "$d"
+  done
+}
+
+keychain_entries() {
+  [[ $(uname -s) == Darwin ]] || return 0
+  have security || return 0
+  local name
+  while read -r name; do
+    [[ -n $name ]] || continue
+    if security find-generic-password -s "$KEYCHAIN_SERVICE" -a "apikey:$name" > /dev/null 2>&1; then
+      printf '%s\n' "$name"
+    fi
+  done < <(profile_names)
+}
+
+# Guard a computed path before rm -rf. Refuses anything that is not a
+# directory holding a cclaw profile layout, so a mangled CCLAW_HOME cannot
+# turn into a recursive delete of something else.
+safe_to_purge() {
+  local dir=$1
+  [[ -n $dir && $dir != "/" && $dir != "$HOME" ]] || return 1
+  [[ -d $dir ]] || return 1
+  [[ -d $dir/profiles || -d $dir/run ]] || return 1
+}
+
+uninstall() {
+  step "removing the cclaw command"
+  if [[ -L $LINK ]]; then
+    local target
+    target=$(readlink "$LINK")
+    # Only remove a link we own. One pointing at another checkout belongs to
+    # that checkout, and silently deleting it would break the other install.
+    if [[ $target == "$ROOT/bin/cclaw" ]]; then
+      rm -f "$LINK" && ok "removed $LINK"
+    elif [[ ! -e $LINK ]]; then
+      # Dangling: its target is gone, so nothing can be using it. Most often
+      # this checkout, moved or renamed since install.
+      rm -f "$LINK" && ok "removed $LINK ${DIM}(was dangling: $target)${RESET}"
+    else
+      warn "$LINK points at $target, not this checkout — left alone"
+      say "     remove it by hand if you meant to: rm $LINK"
+    fi
+  elif [[ -e $LINK ]]; then
+    warn "$LINK exists but is not a symlink — left alone"
+  else
+    ok "no command link to remove"
+  fi
+
+  local entries=()
+  while read -r name; do
+    [[ -n $name ]] && entries+=("$name")
+  done < <(keychain_entries)
+
+  if ((DO_PURGE)); then
+    step "removing profiles and credentials"
+    say ""
+    say "     ${YELLOW}this will permanently delete:${RESET}"
+    local purge_home=0
+    if [[ -d $CCLAW_HOME ]]; then
+      if safe_to_purge "$CCLAW_HOME"; then
+        purge_home=1
+        say "       $CCLAW_HOME  ${DIM}(profiles, grants, goals, session history, logs)${RESET}"
+      else
+        warn "$CCLAW_HOME does not look like a cclaw home — left alone"
+      fi
+    fi
+    if ((${#entries[@]} > 0)); then
+      for name in "${entries[@]}"; do
+        say "       keychain  ${DIM}$KEYCHAIN_SERVICE / apikey:$name${RESET}"
+      done
+    fi
+    if ((purge_home == 0 && ${#entries[@]} == 0)); then
+      ok "nothing to purge"
+      return 0
+    fi
+    say ""
+    if ! ask "delete all of that?"; then
+      warn "purge declined — profiles and credentials kept"
+      return 0
+    fi
+
+    if ((${#entries[@]} > 0)); then
+      for name in "${entries[@]}"; do
+        if security delete-generic-password -s "$KEYCHAIN_SERVICE" -a "apikey:$name" > /dev/null 2>&1; then
+          ok "removed keychain entry for profile '$name'"
+        else
+          warn "could not remove keychain entry for profile '$name'"
+        fi
+      done
+    fi
+
+    if ((purge_home)); then
+      rm -rf "$CCLAW_HOME" && ok "removed $CCLAW_HOME"
+    fi
+  else
+    step "what was left in place"
+    if [[ -d $CCLAW_HOME ]]; then
+      say "     $CCLAW_HOME  ${DIM}profiles, grants, goals, session history${RESET}"
+    fi
+    if ((${#entries[@]} > 0)); then
+      say "     ${#entries[@]} keychain entr$( ((${#entries[@]} == 1)) && printf 'y' || printf 'ies')  ${DIM}service $KEYCHAIN_SERVICE${RESET}"
+    fi
+    if [[ -d $CCLAW_HOME ]] || ((${#entries[@]} > 0)); then
+      say ""
+      say "     remove those too with: ${BLUE}./install.sh --uninstall --purge${RESET}"
+    else
+      ok "nothing else to remove"
+    fi
+    say ""
+    say "     ${DIM}Bun and the Cursor CLI were installed by their own vendors and are untouched.${RESET}"
+  fi
+}
+
 FAILED=0
 
 banner
+
+if ((DO_UNINSTALL)); then
+  uninstall || exit 1
+  step "summary"
+  ok "cclaw uninstalled"
+  say ""
+  say "     ${DIM}the checkout at $ROOT is untouched; delete it by hand if you want it gone${RESET}"
+  say ""
+  exit 0
+fi
 
 # --- 1. Bun, which runs cclaw itself ----------------------------------------
 step "checking Bun"

@@ -682,7 +682,8 @@ needs no model cooperation.
   Shelling out to the `cmux` CLI is fine. Copying or adapting its source into
   cclaw is not. If you need to know what a command does, read
   `docs/cli-contract.md` in its repo and write your own implementation.
-- The clone belongs in `reference/`, which is gitignored and never imported by
-  shipped code — the same rule as `reference/acpx`.
+- The clone lives at `~/dev/cmux`, outside this repo, and is read-only
+  reference material. Nothing in `src/` may import from it or assume it is
+  present.
 - OpenClaw ports remain MIT with attribution in file headers and
   `THIRD-PARTY-NOTICES.md`. Nothing here changes that.

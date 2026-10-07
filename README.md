@@ -10,7 +10,8 @@ by `cursor-agent acp`, so work executes and bills through your Cursor account.
 ./install.sh          # check dependencies, sign in, seed policy
 cclaw                 # start the chat TUI
 cclaw raw             # Cursor's own TUI under a cclaw profile
-cclaw doctor           # diagnose dependencies, auth, sandbox and policy
+cclaw doctor          # diagnose dependencies, auth, sandbox and policy
+./install.sh --help   # installer options, including --uninstall
 ```
 
 ## Commands
@@ -258,6 +259,34 @@ rest `[plan]` rather than listing ~250 models you cannot run.
 **5. Unattended loops refuse all permissions.** Nobody is present to answer, so
 `cclaw loop` declines tool requests and reports what it would need. Every loop
 has a hard iteration count and a wall-clock budget.
+
+## Uninstalling
+
+```sh
+./install.sh --uninstall           # remove the cclaw command
+./install.sh --uninstall --purge   # also remove profiles and credentials
+```
+
+`--uninstall` removes the `~/.local/bin/cclaw` link and nothing else, then
+prints what it left behind. Your profiles, grants, goals and session history
+survive, so reinstalling picks up where you were.
+
+`--purge` additionally deletes `~/.cclaw` (honouring `CCLAW_HOME`) and the
+`cclaw` keychain entries holding per-profile API keys. It lists exactly what
+will go and asks first; `--yes` skips the confirmation for scripted runs.
+**This destroys data** — session transcripts, grants and goals are not
+recoverable.
+
+Two things it deliberately will not do:
+
+- **Remove a command link belonging to another checkout.** It only deletes
+  `~/.local/bin/cclaw` when that link points at _this_ directory, or when it
+  dangles because the checkout moved. Otherwise it says so and leaves it.
+- **Uninstall Bun or the Cursor CLI.** Those are installed by their own
+  vendors, not by this script, and other tools may depend on them.
+
+The checkout itself is never touched. Delete the directory by hand when you
+want it gone.
 
 ## Development
 
