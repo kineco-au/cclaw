@@ -33,6 +33,12 @@ function commandContext(): CommandContext {
     switchMode: async () => true,
     showGoal: () => null,
     savedGoal: () => null,
+    reloadSkills: async () => ({
+      kind: "reloaded" as const,
+      skills: 0,
+      own: 0,
+      contextCarried: false,
+    }),
     resumeGoal: async () => false,
     setGoal: async () => {},
     clearGoal: async () => {},

@@ -17,6 +17,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { join } from "node:path";
 import { buildCommands, GOAL_ITERATIONS, runSlash, type CommandContext } from "./commands.ts";
+import { listSkills } from "./skills.ts";
 import { isPlanGated } from "../plan-gate.ts";
 import { carriedMessage, compactPrompt, isPlausibleSummary, type CarriedKind } from "./compact.ts";
 import { loadUserCommands, type UserCommand } from "./user-commands.ts";
@@ -382,6 +383,39 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
       return ok;
     },
     showGoal: () => goal?.text ?? null,
+    reloadSkills: async () => {
+      userCommands = await loadUserCommands(opts.profilePaths.commandsDir);
+      // Cursor publishes its catalogue once, on session/new, and ACP offers no
+      // way to ask again — so a reload means a new session. The transcript is
+      // carried forward so the conversation is not lost to it.
+      const transcript = [...backend.transcriptOf(SESSION_KEY)];
+      try {
+        await backend.resetSession(SESSION_KEY);
+      } catch (err) {
+        refreshCompletions();
+        return { kind: "failed", reason: err instanceof Error ? err.message : String(err) };
+      }
+      // The catalogue arrives asynchronously; give it a moment to land.
+      for (let i = 0; i < 30 && cursorCommands.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      const contextCarried = transcript.length > 0;
+      if (contextCarried) {
+        carried = renderTranscript(transcript);
+        carriedLabel = "transcript";
+      }
+      turns = 0;
+      sessionId = newSessionId();
+      recordStarted = false;
+      refreshCompletions();
+      setFooter();
+      return {
+        kind: "reloaded",
+        skills: listSkills(cursorCommands).length,
+        own: userCommands.length,
+        contextCarried,
+      };
+    },
     savedGoal: () => (goal === null ? (savedGoal?.text ?? null) : null),
     resumeGoal: async () => {
       if (savedGoal === null) return false;

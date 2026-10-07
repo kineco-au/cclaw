@@ -13,6 +13,7 @@
 import type { AutocompleteItem, SlashCommand } from "@earendil-works/pi-tui";
 import type { SessionSummary } from "./sessions.ts";
 import { expandTemplate, type UserCommand } from "./user-commands.ts";
+import { classifyCatalogue, listSkills, shortDescription } from "./skills.ts";
 
 export interface CommandContext {
   /** Models the live session will accept. */
@@ -54,6 +55,8 @@ export interface CommandContext {
   cursorCommands: () => { name: string; description: string }[];
   /** Slash commands defined by markdown files in the profile. */
   userCommands: () => UserCommand[];
+  /** Re-discover skills and profile commands. */
+  reloadSkills: () => Promise<ReloadSkillsOutcome>;
   /** A goal saved from a previous session, not in effect until resumed. */
   savedGoal: () => string | null;
   /** Take up the saved goal and start working it. */
@@ -63,6 +66,10 @@ export interface CommandContext {
   /** Re-open a saved session. */
   resume: (selector: string) => Promise<ResumeOutcome>;
 }
+
+export type ReloadSkillsOutcome =
+  | { kind: "reloaded"; skills: number; own: number; contextCarried: boolean }
+  | { kind: "failed"; reason: string };
 
 export type ResumeOutcome =
   /**
@@ -137,12 +144,17 @@ export function buildCommands(ctx: CommandContext): SlashCommand[] {
     });
   }
 
-  for (const c of ctx.cursorCommands()) {
+  // Cursor's descriptions are the full skill prompt — hundreds of characters
+  // for some — and it advertises deleted-plugin leftovers. Classify, shorten
+  // and label so the list is readable and a skill is recognisable as one.
+  for (const c of classifyCatalogue(ctx.cursorCommands())) {
     if (seen.has(c.name)) continue;
     seen.add(c.name);
+    const label =
+      c.kind === "user-skill" ? "skill" : c.kind === "builtin-skill" ? "cursor skill" : "cursor";
     out.push({
       name: c.name,
-      description: c.description === "" ? "cursor command" : c.description,
+      description: c.summary === "" ? label : `${label} · ${c.summary}`,
     });
   }
 
@@ -255,6 +267,8 @@ function builtinCommands(ctx: CommandContext): SlashCommand[] {
           }));
       },
     },
+    { name: "skills", description: "list the skills available in this session" },
+    { name: "reload-skills", description: "re-discover skills and profile commands" },
     { name: "usage", description: "session, plan and grant summary" },
     {
       name: "grant",
@@ -402,6 +416,57 @@ export async function runSlash(input: string, ctx: CommandContext): Promise<Comm
           (ctx.busy() ? " Starting once the current turn finishes." : ""),
       );
       void ctx.runLoop(GOAL_ITERATIONS);
+      return { handled: true };
+    }
+
+    case "skills": {
+      const skills = listSkills(ctx.cursorCommands());
+      if (skills.length === 0) {
+        ctx.say("No skills found. Cursor discovers them from .claude/skills and .cursor/skills.");
+        return { handled: true };
+      }
+      const mine = skills.filter((s) => s.kind === "user-skill");
+      const cursorOwn = skills.filter((s) => s.kind === "builtin-skill");
+      const own = ctx.userCommands();
+      const lines: string[] = [];
+      const section = (title: string, group: { name: string; description: string }[]): void => {
+        if (group.length === 0) return;
+        lines.push(title);
+        const width = Math.max(...group.map((s) => s.name.length));
+        // Keep each entry on one row: the name column plus the gutters eat
+        // into the 80 columns a narrow terminal gives us.
+        const room = Math.max(24, 74 - width);
+        for (const s of group) {
+          lines.push(`  /${s.name.padEnd(width)}  ${shortDescription(s.description, room)}`);
+        }
+        lines.push("");
+      };
+      section(`Your skills (${mine.length})`, mine);
+      section(`Cursor's skills (${cursorOwn.length})`, cursorOwn);
+      section(`Your cclaw commands (${own.length})`, own);
+      lines.push("Run one by name, like any slash command.");
+      ctx.say(lines.join("\n"));
+      return { handled: true };
+    }
+
+    case "reload-skills": {
+      if (ctx.busy() || ctx.loopRunning()) {
+        ctx.say("Wait for the current turn to finish, then reload.");
+        return { handled: true };
+      }
+      ctx.say("Reloading skills…");
+      const outcome = await ctx.reloadSkills();
+      if (outcome.kind === "failed") {
+        ctx.say(`Could not reload: ${outcome.reason}`);
+        return { handled: true };
+      }
+      ctx.say(
+        `Reloaded: ${outcome.skills} skill(s), ${outcome.own} profile command(s).` +
+          (outcome.contextCarried
+            ? "\n\nCursor only publishes its catalogue to a new session, so this one was " +
+              "replaced. The conversation so far is carried into your next message as context."
+            : ""),
+      );
       return { handled: true };
     }
 

@@ -34,11 +34,11 @@ up either if missing. The Cursor desktop app is not needed.
 Type `/` for the list; Tab completes names and arguments. Three sources merge,
 and cclaw's own win a name collision:
 
-| Source   | Commands                                                                                                     |
-| -------- | ------------------------------------------------------------------------------------------------------------ |
-| built in | `/model` `/mode` `/compact` `/resume` `/thinking` `/goal` `/loop` `/usage` `/grant` `/clear` `/help` `/exit` |
-| yours    | one markdown file per command in `<profile>/commands/`                                                       |
-| Cursor's | its own commands, plus skills it finds in `.claude/skills/`, `.cursor/skills/` and your plugins              |
+| Source   | Commands                                                                                                                                |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| built in | `/model` `/mode` `/compact` `/resume` `/thinking` `/goal` `/loop` `/skills` `/reload-skills` `/usage` `/grant` `/clear` `/help` `/exit` |
+| yours    | one markdown file per command in `<profile>/commands/`                                                                                  |
+| Cursor's | its own commands, plus skills it finds in `.claude/skills/`, `.cursor/skills/` and your plugins                                         |
 
 A command of your own is a markdown file whose body is the prompt:
 
@@ -53,6 +53,23 @@ Review $ARGUMENTS and list only real defects.
 
 `$ARGUMENTS` takes everything after the command, `$1`…`$9` take single words,
 and a template with no placeholder gets the arguments appended.
+
+## Skills
+
+Cursor discovers skills from `.claude/skills/`, `.cursor/skills/` and your
+plugins, and cclaw lists them alongside its own commands when you type `/`.
+Each is labelled by where it came from — `skill` for yours, `cursor skill` for
+Cursor's — with its description trimmed to one line.
+
+```
+/skills           list every skill, grouped by source
+/reload-skills    re-discover them after adding or editing one
+```
+
+`/reload-skills` also re-reads `<profile>/commands/`. Cursor only publishes its
+catalogue to a new session, so reloading replaces the current one and carries
+the conversation into your next message as context; it refuses mid-turn rather
+than dropping a session in flight.
 
 ## Using the TUI
 

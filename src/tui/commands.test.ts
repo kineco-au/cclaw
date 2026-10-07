@@ -50,6 +50,10 @@ function ctx(overrides: Partial<CommandContext> = {}): { c: CommandContext; said
       grants: { permanent: 1, session: 2 },
     }),
     savedGoal: () => null,
+    reloadSkills: async () => {
+      said.push("<skills reloaded>");
+      return { kind: "reloaded", skills: 19, own: 2, contextCarried: false };
+    },
     resumeGoal: async () => {
       said.push("<goal resumed>");
       return true;
@@ -706,6 +710,89 @@ describe("discovered commands", () => {
 
   test("a description-less Cursor command still gets a label", () => {
     const cmds = buildCommands(ctx({ cursorCommands: () => [{ name: "x", description: "" }] }).c);
-    expect(cmds.find((c) => c.name === "x")?.description).toBe("cursor command");
+    expect(cmds.find((c) => c.name === "x")?.description).toBe("cursor");
+  });
+});
+
+describe("skills in the command list", () => {
+  const catalogue = [
+    { name: "morning", description: "Render the morning brief. (user skill)" },
+    { name: "autopilot", description: "Keep going autonomously. (builtin skill)" },
+    { name: "worktree", description: "Manage worktrees" },
+    { name: ".trash-1789-abc-computer-use", description: "junk (user skill)" },
+    {
+      name: "synced-8506bf56-96a3-4ed2-ae4c-5cb817ed78c2-browser",
+      description: "junk (user skill)",
+    },
+  ];
+
+  test("a user skill is labelled as a skill in the completions", () => {
+    const cmds = buildCommands(ctx({ cursorCommands: () => catalogue }).c);
+    expect(cmds.find((c) => c.name === "morning")?.description).toBe(
+      "skill · Render the morning brief.",
+    );
+  });
+
+  test("Cursor's own skills are distinguished from your own", () => {
+    const cmds = buildCommands(ctx({ cursorCommands: () => catalogue }).c);
+    expect(cmds.find((c) => c.name === "autopilot")?.description).toStartWith("cursor skill · ");
+    expect(cmds.find((c) => c.name === "worktree")?.description).toStartWith("cursor · ");
+  });
+
+  test("deleted-plugin leftovers are not offered", () => {
+    const names = buildCommands(ctx({ cursorCommands: () => catalogue }).c).map((c) => c.name);
+    expect(names).not.toContain(".trash-1789-abc-computer-use");
+    expect(names.some((n) => n.startsWith("synced-8506bf56"))).toBe(false);
+    expect(names).toContain("morning");
+  });
+
+  test("/skills groups yours before Cursor's and counts them", async () => {
+    const { c, said } = ctx({ cursorCommands: () => catalogue });
+    await runSlash("/skills", c);
+    expect(said[0]).toContain("Your skills (1)");
+    expect(said[0]).toContain("/morning");
+    expect(said[0]).toContain("Cursor's skills (1)");
+    expect(said[0]).toContain("/autopilot");
+    // Plain commands are not skills.
+    expect(said[0]).not.toContain("/worktree");
+    expect(said[0]?.indexOf("Your skills")).toBeLessThan(said[0]?.indexOf("Cursor's skills") ?? 0);
+  });
+
+  test("/skills says so when there are none", async () => {
+    const { c, said } = ctx({ cursorCommands: () => [] });
+    await runSlash("/skills", c);
+    expect(said[0]).toContain("No skills found");
+  });
+
+  test("/reload-skills reloads and reports the counts", async () => {
+    const { c, said } = ctx();
+    await runSlash("/reload-skills", c);
+    expect(said).toContain("<skills reloaded>");
+    expect(said.at(-1)).toContain("19 skill(s)");
+    expect(said.at(-1)).toContain("2 profile command(s)");
+  });
+
+  test("/reload-skills refuses mid-turn rather than dropping the session", async () => {
+    // Reloading replaces the ACP session, so doing it mid-turn would lose it.
+    const { c, said } = ctx({ busy: () => true });
+    await runSlash("/reload-skills", c);
+    expect(said).not.toContain("<skills reloaded>");
+    expect(said[0]).toContain("Wait for the current turn");
+  });
+
+  test("/reload-skills explains when context had to be carried", async () => {
+    const { c, said } = ctx({
+      reloadSkills: async () => ({ kind: "reloaded", skills: 3, own: 0, contextCarried: true }),
+    });
+    await runSlash("/reload-skills", c);
+    expect(said.at(-1)).toContain("carried into your next message");
+  });
+
+  test("/reload-skills reports a failure instead of claiming success", async () => {
+    const { c, said } = ctx({
+      reloadSkills: async () => ({ kind: "failed", reason: "no session" }),
+    });
+    await runSlash("/reload-skills", c);
+    expect(said.at(-1)).toContain("Could not reload: no session");
   });
 });
