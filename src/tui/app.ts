@@ -164,6 +164,13 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
     tui.requestRender();
   };
 
+  /** Tell Cursor to end whatever turn is in flight, if any. */
+  const abortInFlight = (): void => {
+    void backend.abortChat({ sessionKey: SESSION_KEY }).catch(() => {
+      // Already finished.
+    });
+  };
+
   /** Show the prompt for one request. Called as each reaches the front. */
   const announcePermission = (ctx: AskContext): void => {
     chatLog.addSystem(
@@ -268,9 +275,14 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
   };
 
   editor.onEscape = () => {
-    // Cancelling the turn alone would let the loop start the next iteration,
-    // leaving no way to stop a goal that is not converging.
-    if (loopRunning) loopAbort = true;
+    // A loop sends outside the TurnController, so `controller.running` is false
+    // and cancel() would fall through every branch doing nothing. The loop's
+    // turn has to be aborted here, and the loop told to stop.
+    if (loopRunning) {
+      loopAbort = true;
+      abortInFlight();
+      say("Stopping the loop — the agent may still finish the turn in flight.");
+    }
     controller.cancel();
   };
 
@@ -333,11 +345,7 @@ export async function runChatApp(opts: AppOptions): Promise<number> {
     send: async (text) => {
       await send(text);
     },
-    abort: () => {
-      void backend.abortChat({ sessionKey: SESSION_KEY }).catch(() => {
-        // Already finished.
-      });
-    },
+    abort: abortInFlight,
     denyPrompt: () => {
       const denied = permissions.denyAll();
       if (denied > 1) say(`Denied ${denied} permission requests.`);

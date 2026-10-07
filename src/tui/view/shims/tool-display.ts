@@ -37,12 +37,40 @@ const DETAIL_KEYS = [
   "description",
 ] as const;
 
-/** `read_file` -> `Read File`; `mcp__foo__bar` -> `Foo Bar`. */
+/**
+ * `read_file` -> `Read File`; `mcp__foo__bar` -> `Foo Bar`.
+ *
+ * A name that already contains a space is a label someone composed, not a
+ * tool identifier, so it is left alone. Title-casing it produced rows like
+ * `Read Src/cli Ts` from `Read src/cli.ts`.
+ */
 function humanise(name: string): string {
+  if (/\s/.test(name.trim())) return name.trim();
   const stripped = name.replace(/^mcp__/, "").replace(/__/g, " ");
   const words = stripped.split(/[\s_\-.]+/).filter((w) => w !== "");
   if (words.length === 0) return "Tool";
   return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+/**
+ * A readable summary of whatever arguments are left.
+ *
+ * The component's own fallback is `JSON.stringify(args)`, which renders rows
+ * like `Execute {"title":"…"}`. Returning a `key: value` line instead keeps
+ * that path from ever being reached, including for tools whose arguments use
+ * keys we do not know.
+ */
+function summariseArgs(rec: Record<string, unknown>): string | undefined {
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(rec)) {
+    if (value === null || value === undefined) continue;
+    if (typeof value === "object") continue;
+    const text = String(value).replace(/\s+/gu, " ").trim();
+    if (text === "") continue;
+    parts.push(`${key}: ${text.length > 60 ? `${text.slice(0, 59)}…` : text}`);
+    if (parts.length === 3) break;
+  }
+  return parts.length === 0 ? undefined : parts.join("  ");
 }
 
 function firstDetail(args: unknown): string | undefined {
@@ -54,7 +82,7 @@ function firstDetail(args: unknown): string | undefined {
     const v = rec[key];
     if (typeof v === "string" && v.trim() !== "") return v.trim();
   }
-  return undefined;
+  return summariseArgs(rec);
 }
 
 export function resolveToolDisplay(params: {

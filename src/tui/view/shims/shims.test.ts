@@ -103,3 +103,24 @@ describe("tool-display adapter", () => {
     expect(formatToolDetail({ name: "x", title: "X", label: "X", detail: "   " })).toBeUndefined();
   });
 });
+
+describe("resolveToolDisplay labels", () => {
+  test("humanises a tool identifier", () => {
+    expect(resolveToolDisplay({ name: "read_file" }).label).toBe("Read File");
+    expect(resolveToolDisplay({ name: "mcp__linear__create_issue" }).label).toBe(
+      "Linear Create Issue",
+    );
+  });
+
+  test("leaves an already-composed label alone", () => {
+    // Title-casing a composed header produced rows like "Read Src/cli Ts".
+    expect(resolveToolDisplay({ name: "Read src/cli.ts" }).label).toBe("Read src/cli.ts");
+    expect(resolveToolDisplay({ name: "Run  bun run check" }).label).toBe("Run  bun run check");
+  });
+
+  test("summarises unknown arguments instead of dumping JSON", () => {
+    const d = resolveToolDisplay({ name: "weird", args: { unknown_key: "some value" } });
+    expect(d.detail).toBe("unknown_key: some value");
+    expect(d.detail).not.toContain("{");
+  });
+});

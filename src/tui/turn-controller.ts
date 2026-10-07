@@ -80,7 +80,7 @@ export class TurnController {
       // just produces a stuck spinner.
       this.cancelled = true;
       this.hooks.abort();
-      this.hooks.say("Denied and cancelled.");
+      this.hooks.say("Denied. Stopping the turn…");
       this.hooks.changed();
       return { kind: "prompt-denied" };
     }
@@ -90,7 +90,7 @@ export class TurnController {
     if (this.running && !this.cancelled) {
       this.cancelled = true;
       this.hooks.abort();
-      this.hooks.say("Cancelled.");
+      this.hooks.say("Stopping… a command already running may still finish.");
       this.hooks.changed();
       return { kind: "turn-cancelled" };
     }
@@ -123,7 +123,9 @@ export class TurnController {
         this.hooks.onError(err);
       })
       .finally(() => {
+        const wasCancelled = this.cancelled;
         this.running = false;
+        if (wasCancelled) this.hooks.say("Turn stopped.");
         this.hooks.changed();
         this.drain();
       });

@@ -30,6 +30,116 @@ export function toolLabel(ev: ToolEvent): string {
   return ev.title ?? ev.name ?? ev.kind ?? "tool";
 }
 
+/** A short verb per ACP tool kind, so a row reads as an action. */
+const KIND_VERB: Record<string, string> = {
+  read: "Read",
+  edit: "Edit",
+  delete: "Delete",
+  move: "Move",
+  search: "Search",
+  execute: "Run",
+  think: "Think",
+  fetch: "Fetch",
+  switch_mode: "Switch mode",
+  other: "Tool",
+};
+
+/** Argument keys worth showing, most specific first. */
+const DETAIL_KEYS = [
+  "command",
+  "cmd",
+  "file_path",
+  "filePath",
+  "path",
+  "file",
+  "pattern",
+  "query",
+  "url",
+  "description",
+] as const;
+
+/** `read_file` -> `Read file`; `mcp__linear__issue` -> `Linear issue`. */
+function humaniseName(name: string): string {
+  const words = name
+    .replace(/^mcp__/, "")
+    .replace(/__/g, " ")
+    .split(/[\s_\-.]+/)
+    .filter((w) => w !== "");
+  if (words.length === 0) return "Tool";
+  const [first, ...rest] = words;
+  return [(first ?? "").charAt(0).toUpperCase() + (first ?? "").slice(1), ...rest].join(" ");
+}
+
+function detailFromArgs(raw: unknown): string | undefined {
+  if (raw === null || typeof raw !== "object") return undefined;
+  const rec = raw as Record<string, unknown>;
+  for (const key of DETAIL_KEYS) {
+    const v = rec[key];
+    if (typeof v === "string" && v.trim() !== "") return v.trim();
+  }
+  // An unrecognised shape still beats showing nothing: summarise the scalars
+  // rather than dropping them, which left rows reading just "Weird Tool …".
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(rec)) {
+    if (value === null || value === undefined || typeof value === "object") continue;
+    const text = String(value).trim();
+    if (text === "") continue;
+    parts.push(`${key}: ${text}`);
+    if (parts.length === 2) break;
+  }
+  return parts.length === 0 ? undefined : parts.join("  ");
+}
+
+/** Collapse to one line and bound the length for a single row. */
+function oneLine(text: string, max = 120): string {
+  const line = text.replace(/\s+/gu, " ").trim();
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+/**
+ * A human row for a tool call: an action and what it acted on.
+ *
+ * Without this the chat log fell back to dumping the raw arguments as JSON —
+ * `Execute {"title":"…"}` — because the display adapter only recognises a few
+ * argument keys and nothing supplied a description.
+ */
+export function describeTool(ev: ToolEvent): { label: string; detail?: string } {
+  const label =
+    (ev.kind !== undefined ? KIND_VERB[ev.kind] : undefined) ??
+    (ev.name !== undefined ? humaniseName(ev.name) : undefined) ??
+    "Tool";
+
+  const fromArgs = detailFromArgs(ev.rawInput);
+  const fromLocations =
+    ev.locations !== undefined && ev.locations.length > 0 ? ev.locations.join(", ") : undefined;
+  // Cursor's own title is usually already a sentence ("Read src/cli.ts"), so
+  // it is the best detail when the arguments give nothing. Drop a leading verb
+  // that would otherwise read as "Read  Read src/cli.ts".
+  const fromTitle =
+    ev.title === undefined
+      ? undefined
+      : ev.title.toLowerCase().startsWith(label.toLowerCase())
+        ? ev.title.slice(label.length).trim() || undefined
+        : ev.title;
+
+  const detail = fromArgs ?? fromLocations ?? fromTitle;
+  // A generic kind with a prose title needs no "Tool" in front of it.
+  if (
+    label === "Tool" &&
+    fromArgs === undefined &&
+    fromLocations === undefined &&
+    detail !== undefined
+  ) {
+    return { label: oneLine(detail) };
+  }
+  return { label, ...(detail !== undefined ? { detail: oneLine(detail) } : {}) };
+}
+
+/** The single header row: an action and what it acted on. */
+export function toolHeader(label: string, detail?: string): string {
+  return detail === undefined || detail === "" ? label : `${label}  ${detail}`;
+}
+
 /**
  * Upsert one tool call.
  *
@@ -39,8 +149,11 @@ export function toolLabel(ev: ToolEvent): string {
  * show, so a pending call renders as running rather than as finished-and-empty.
  */
 export function renderToolEvent(sink: ToolRenderSink, ev: ToolEvent): void {
-  const label = toolLabel(ev);
-  sink.startTool(ev.toolCallId, ev.name ?? ev.kind ?? label, ev.rawInput ?? { title: label });
+  const { label, detail } = describeTool(ev);
+  // One header row reading "Run bun run check" rather than a verb on its own
+  // line and the target on the next. Args are passed as undefined: anything
+  // else renders a second line, and an object would be dumped as JSON.
+  sink.startTool(ev.toolCallId, toolHeader(label, detail), undefined);
 
   const terminal = isTerminalStatus(ev.status);
   if (ev.output === undefined && !terminal) return;

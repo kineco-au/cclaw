@@ -164,7 +164,7 @@ describe("cancel", () => {
     h.ctl.submit("long");
     expect(h.ctl.cancel()).toEqual({ kind: "turn-cancelled" });
     expect(h.aborts).toBe(1);
-    expect(h.said.join()).toContain("Cancelled.");
+    expect(h.said.join()).toContain("Stopping");
   });
 
   test("denies a pending prompt and stops its turn", () => {
@@ -175,7 +175,7 @@ describe("cancel", () => {
     expect(h.denies).toBe(1);
     // The turn must stop too, or the spinner hangs after a refusal.
     expect(h.aborts).toBe(1);
-    expect(h.said.join()).toContain("Denied and cancelled.");
+    expect(h.said.join()).toContain("Denied");
   });
 
   test("the prompt takes priority over the running turn", () => {
@@ -270,5 +270,32 @@ describe("state reporting", () => {
     h.ctl.submit("b");
     expect(h.ctl.clearQueue()).toBe(2);
     expect(h.ctl.queued).toEqual([]);
+  });
+});
+
+describe("cancel wording and confirmation", () => {
+  test("Esc does not claim the turn has stopped before it has", async () => {
+    // It only asks the agent to stop; saying "Cancelled." asserted an outcome
+    // that had not happened, while a dispatched command kept running.
+    const h = harness();
+    h.ctl.submit("go");
+    h.ctl.cancel();
+    expect(h.said.join()).not.toContain("Cancelled.");
+    expect(h.said.join()).toContain("may still finish");
+  });
+
+  test("confirms once the cancelled turn actually ends", async () => {
+    const h = harness();
+    h.ctl.submit("go");
+    h.ctl.cancel();
+    await h.finish();
+    expect(h.said.join()).toContain("Turn stopped.");
+  });
+
+  test("an uncancelled turn is not announced as stopped", async () => {
+    const h = harness();
+    h.ctl.submit("go");
+    await h.finish();
+    expect(h.said.join()).not.toContain("Turn stopped.");
   });
 });
